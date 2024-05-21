@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 )
 
 const SIMPLE_STRING_SPECIFIER = '+'
@@ -19,11 +22,17 @@ type RedisCommand struct {
 	Parameters []string
 }
 
+type RedisValue struct {
+	Value     string
+	ExpiresAt *time.Time
+}
+
 type redisServer struct {
 	host string
 	port string
 
-	store map[string]string
+	mutex *sync.Mutex
+	store map[string]RedisValue
 }
 
 func NewRedisServer(host string, port string) *redisServer {
@@ -32,7 +41,8 @@ func NewRedisServer(host string, port string) *redisServer {
 		host: host,
 		port: port,
 
-		store: make(map[string]string),
+		mutex: &sync.Mutex{},
+		store: make(map[string]RedisValue),
 	}
 }
 
@@ -83,17 +93,70 @@ func (r *redisServer) handleCommand(reader *bufio.Reader, writer *bufio.Writer) 
 		writeSimpleString(writer, "PONG")
 	} else if command.Name == "ECHO" {
 		writeBulkString(writer, command.Parameters[0])
-	} else if command.Name == "SET" && len(command.Parameters) == 2 {
-		r.store[command.Parameters[0]] = command.Parameters[1]
-		writeSimpleString(writer, "OK")
-	} else if command.Name == "GET" && len(command.Parameters) == 1 {
-		value, ok := r.store[command.Parameters[0]]
-		if !ok {
-			writeError(writer, "ERROR: Key not found")
-		} else {
-			writeBulkString(writer, value)
-		}
+	} else if command.Name == "SET" {
+		r.handleSET(writer, command)
+	} else if command.Name == "GET" {
+		r.handleGET(writer, command)
 	} else {
 		writeError(writer, "ERROR")
+	}
+}
+
+func (r *redisServer) handleSET(writer *bufio.Writer, command *RedisCommand) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	// SET foo bar
+	if len(command.Parameters) == 2 {
+		key := command.Parameters[0]
+		value := command.Parameters[1]
+		r.store[key] = RedisValue{
+			Value:     value,
+			ExpiresAt: nil,
+		}
+
+		writeSimpleString(writer, "OK")
+		fmt.Printf("key: %s, value: %s\n", key, value)
+
+		// SET foo bar PX 10000
+	} else if len(command.Parameters) == 4 &&
+		strings.ToUpper(command.Parameters[2]) == "PX" {
+
+		key := command.Parameters[0]
+		value := command.Parameters[1]
+		durationMs, err := strconv.Atoi(command.Parameters[3])
+		if err != nil {
+			writeError(writer, "ERROR")
+			return
+		}
+
+		expiresAt := time.Now().Add(time.Duration(durationMs) * time.Millisecond)
+		r.store[key] = RedisValue{
+			Value:     value,
+			ExpiresAt: &expiresAt,
+		}
+
+		writeSimpleString(writer, "OK")
+		fmt.Printf("key: %s, value: %s, expiresAt: %s\n", key, value, expiresAt)
+	}
+}
+
+func (r *redisServer) handleGET(writer *bufio.Writer, command *RedisCommand) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	if len(command.Parameters) == 1 {
+		key := command.Parameters[0]
+		value, ok := r.store[key]
+		if !ok {
+			writeError(writer, "ERROR: Key not found")
+			fmt.Printf("key: %s not found\n", key)
+		} else if value.ExpiresAt != nil && value.ExpiresAt.Before(time.Now()) {
+			writeNullBulkString(writer)
+			fmt.Printf("key: %s expired\n", key)
+		} else {
+			writeBulkString(writer, value.Value)
+			fmt.Printf("key: %s, value: %s\n", key, value.Value)
+		}
 	}
 }
