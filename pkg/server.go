@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"bufio"
 	"fmt"
 	"net"
 	"os"
@@ -48,14 +49,39 @@ func (r *redisServer) Start() {
 
 func (r *redisServer) handleConnection(conn net.Conn) {
 
-	buf := make([]byte, 1024)
-	n, err := conn.Read(buf)
-	if err != nil {
-		fmt.Println("Error reading from connection: ", err.Error())
+	reader := bufio.NewReader(conn)
+
+	b, err := reader.ReadByte()
+	if err != nil || b != '*' {
+		fmt.Println("Error reading byte: ", err.Error())
 		return
 	}
 
-	command := string(buf[:n])
+	stringsCountString, err := reader.ReadBytes('\r')
+	if err != nil {
+		fmt.Println("Error reading bytes: ", err.Error())
+		return
+	}
+	stringsCountString = stringsCountString[:len(stringsCountString)-2] // remove '\r'
+	reader.Discard(1)                                                   // '\n'
+	fmt.Printf("Strings count: %s\n", stringsCountString)
+
+	bulkStringLen, err := reader.ReadBytes('\r')
+	if err != nil {
+		fmt.Println("Error reading bytes: ", err.Error())
+		return
+	}
+	bulkStringLen = bulkStringLen[:len(bulkStringLen)-2] // remove '\r'
+	reader.Discard(1)                                    // '\n'
+	fmt.Printf("Bulk string length: %s\n", bulkStringLen)
+
+	command, err := reader.ReadString('\r')
+	if err != nil {
+		fmt.Println("Error reading bytes: ", err.Error())
+		return
+	}
+	command = command[:len(command)-2] // remove '\r'
+	reader.Discard(1)                  // '\n'
 	fmt.Println("Received command: ", command)
 
 	if command == "PING" {
