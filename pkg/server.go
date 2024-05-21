@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
 )
 
@@ -16,9 +14,16 @@ const INTEGER_SPECIFIER = ':'
 const BULK_STRING_SPECIFIER = '$'
 const ARRAY_SPECIFIER = '*'
 
+type RedisCommand struct {
+	Name       string
+	Parameters []string
+}
+
 type redisServer struct {
 	host string
 	port string
+
+	store map[string]string
 }
 
 func NewRedisServer(host string, port string) *redisServer {
@@ -26,6 +31,8 @@ func NewRedisServer(host string, port string) *redisServer {
 	return &redisServer{
 		host: host,
 		port: port,
+
+		store: make(map[string]string),
 	}
 }
 
@@ -66,101 +73,27 @@ func (r *redisServer) handleConnection(conn net.Conn) {
 	}
 }
 
-func parseParametersCount(reader *bufio.Reader) int {
-	firstByte, err := reader.ReadByte()
-	if err != nil || firstByte != ARRAY_SPECIFIER {
-		fmt.Println("Error reading byte: ", err.Error())
-		return -1
-	}
-	parametersCountStr, err := reader.ReadString('\r')
-	if err != nil {
-		fmt.Println("Error reading bytes: ", err.Error())
-		return -1
-	}
-	parametersCountStr = parametersCountStr[:len(parametersCountStr)-1] // remove '\r'
-	reader.Discard(1)                                                   // '\n'
-	fmt.Printf("Strings count: %s\n", parametersCountStr)
-
-	count, err := strconv.Atoi(parametersCountStr)
-	if err != nil {
-		fmt.Println("Error parsing string: ", err.Error())
-		return -1
-	}
-	return count
-}
-
-func parseBulkStringLen(reader *bufio.Reader) int {
-	firstByte, err := reader.ReadByte()
-	if err != nil || firstByte != BULK_STRING_SPECIFIER {
-		fmt.Println("Error reading byte: ", err.Error())
-		return -1
-	}
-	bulkStringLen, err := reader.ReadString('\r')
-	if err != nil {
-		fmt.Println("Error reading bytes: ", err.Error())
-		return -1
-	}
-	bulkStringLen = bulkStringLen[:len(bulkStringLen)-1] // remove '\r'
-	reader.Discard(1)                                    // '\n'
-	fmt.Printf("Bulk string length: %s\n", bulkStringLen)
-
-	length, err := strconv.Atoi(bulkStringLen)
-	if err != nil {
-		fmt.Println("Error parsing bulk string: ", err.Error())
-		return -1
-	}
-	return length
-}
-
-func parseCommand(reader *bufio.Reader) []string {
-	var command []string
-	parametersCount := parseParametersCount(reader)
-	if parametersCount == -1 {
-		return nil
-	}
-
-	for i := 0; i < parametersCount; i++ {
-		bulkStringLen := parseBulkStringLen(reader)
-		if bulkStringLen == -1 {
-			return nil
-		}
-
-		str, err := reader.ReadString('\r')
-		if err != nil {
-			fmt.Println("Error reading bytes: ", err.Error())
-			return nil
-		}
-		str = str[:len(str)-1] // remove '\r'
-		reader.Discard(1)      // '\n'
-		fmt.Println("Received string: ", str)
-
-		command = append(command, str)
-	}
-
-	return command
-}
-
-func writeSimpleString(writer *bufio.Writer, str string) {
-	writer.Write([]byte{'+'})
-	writer.Write([]byte(str + "\r\n"))
-}
-
-func writeBulkString(writer *bufio.Writer, str string) {
-	writer.Write([]byte{'$'})
-	writer.Write([]byte(strconv.Itoa(len(str)) + "\r\n"))
-	writer.Write([]byte(str + "\r\n"))
-}
-
 func (r *redisServer) handleCommand(reader *bufio.Reader, writer *bufio.Writer) {
 	command := parseCommand(reader)
-	if len(command) == 0 {
+	if command == nil {
 		return
 	}
-	commandName := strings.ToUpper(command[0])
 
-	if commandName == "PING" {
+	if command.Name == "PING" {
 		writeSimpleString(writer, "PONG")
-	} else if commandName == "ECHO" {
-		writeBulkString(writer, command[1])
+	} else if command.Name == "ECHO" {
+		writeBulkString(writer, command.Parameters[0])
+	} else if command.Name == "SET" && len(command.Parameters) == 2 {
+		r.store[command.Parameters[0]] = command.Parameters[1]
+		writeSimpleString(writer, "OK")
+	} else if command.Name == "GET" && len(command.Parameters) == 1 {
+		value, ok := r.store[command.Parameters[0]]
+		if !ok {
+			writeError(writer, "ERROR: Key not found")
+		} else {
+			writeBulkString(writer, value)
+		}
+	} else {
+		writeError(writer, "ERROR")
 	}
 }
