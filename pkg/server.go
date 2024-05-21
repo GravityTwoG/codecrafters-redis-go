@@ -60,8 +60,8 @@ func (r *redisServer) handleConnection(conn net.Conn) {
 
 	for {
 		r.handleCommand(reader, writer)
+		writer.Flush()
 	}
-
 }
 
 func (r *redisServer) handleCommand(reader *bufio.Reader, writer *bufio.Writer) {
