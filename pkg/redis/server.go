@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	redisstore "github.com/codecrafters-io/redis-starter-go/pkg/redis/store"
 )
 
 const SIMPLE_STRING_SPECIFIER = '+'
@@ -22,17 +24,11 @@ type RedisCommand struct {
 	Parameters []string
 }
 
-type RedisValue struct {
-	Value     string
-	ExpiresAt *time.Time
-}
-
 type redisServer struct {
 	host string
 	port string
 
-	mutex *sync.Mutex
-	store map[string]RedisValue
+	store *redisstore.RedisStore
 }
 
 func NewRedisServer(host string, port string) *redisServer {
@@ -41,8 +37,7 @@ func NewRedisServer(host string, port string) *redisServer {
 		host: host,
 		port: port,
 
-		mutex: &sync.Mutex{},
-		store: make(map[string]RedisValue),
+		store: redisstore.NewRedisStore(),
 	}
 }
 
@@ -103,18 +98,12 @@ func (r *redisServer) handleCommand(reader *bufio.Reader, writer *bufio.Writer) 
 }
 
 func (r *redisServer) handleSET(writer *bufio.Writer, command *RedisCommand) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
 
 	// SET foo bar
 	if len(command.Parameters) == 2 {
 		key := command.Parameters[0]
 		value := command.Parameters[1]
-		r.store[key] = RedisValue{
-			Value:     value,
-			ExpiresAt: nil,
-		}
-
+		r.store.Set(key, value)
 		writeSimpleString(writer, "OK")
 		fmt.Printf("key: %s, value: %s\n", key, value)
 
@@ -130,33 +119,30 @@ func (r *redisServer) handleSET(writer *bufio.Writer, command *RedisCommand) {
 			return
 		}
 
-		expiresAt := time.Now().Add(time.Duration(durationMs) * time.Millisecond)
-		r.store[key] = RedisValue{
-			Value:     value,
-			ExpiresAt: &expiresAt,
-		}
-
+		duration := time.Duration(durationMs) * time.Millisecond
+		r.store.SetWithTTL(key, value, duration)
 		writeSimpleString(writer, "OK")
-		fmt.Printf("key: %s, value: %s, expiresAt: %s\n", key, value, expiresAt)
+		fmt.Printf("key: %s, value: %s, duration: %s\n", key, value, duration)
 	}
 }
 
 func (r *redisServer) handleGET(writer *bufio.Writer, command *RedisCommand) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
 	if len(command.Parameters) == 1 {
 		key := command.Parameters[0]
-		value, ok := r.store[key]
+		value, ok, err := r.store.Get(key)
 		if !ok {
 			writeError(writer, "ERROR: Key not found")
 			fmt.Printf("key: %s not found\n", key)
-		} else if value.ExpiresAt != nil && value.ExpiresAt.Before(time.Now()) {
-			writeNullBulkString(writer)
-			fmt.Printf("key: %s expired\n", key)
+		} else if err != nil {
+			if err.Error() == "EXPIRED" {
+				writeNullBulkString(writer)
+				fmt.Printf("key: %s expired\n", key)
+			} else {
+				writeError(writer, err.Error())
+			}
 		} else {
-			writeBulkString(writer, value.Value)
-			fmt.Printf("key: %s, value: %s\n", key, value.Value)
+			writeBulkString(writer, value)
+			fmt.Printf("key: %s, value: %s\n", key, value)
 		}
 	}
 }

@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	redis "github.com/codecrafters-io/redis-starter-go/pkg"
+	redis "github.com/codecrafters-io/redis-starter-go/pkg/redis"
 )
 
 func main() {
