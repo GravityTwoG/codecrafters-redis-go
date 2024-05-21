@@ -17,7 +17,8 @@ func writeBulkString(writer *bufio.Writer, str string) {
 }
 
 func writeNullBulkString(writer *bufio.Writer) {
-	writeBulkString(writer, "-1")
+	writer.Write([]byte{BULK_STRING_SPECIFIER})
+	writer.Write([]byte("-1\r\n"))
 }
 
 func writeInteger(writer *bufio.Writer, str string) {
