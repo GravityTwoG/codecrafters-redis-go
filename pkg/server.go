@@ -56,7 +56,15 @@ func (r *redisServer) Start() {
 func (r *redisServer) handleConnection(conn net.Conn) {
 
 	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
 
+	for {
+		r.handleCommand(reader, writer)
+	}
+
+}
+
+func (r *redisServer) handleCommand(reader *bufio.Reader, writer *bufio.Writer) {
 	firstByte, err := reader.ReadByte()
 	if err != nil || firstByte != ARRAY_SPECIFIER {
 		fmt.Println("Error reading byte: ", err.Error())
@@ -96,6 +104,6 @@ func (r *redisServer) handleConnection(conn net.Conn) {
 	fmt.Println("Received command: ", command)
 
 	if command == "PING" {
-		conn.Write([]byte("+PONG\r\n"))
+		writer.Write([]byte("+PONG\r\n"))
 	}
 }
