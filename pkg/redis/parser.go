@@ -69,7 +69,7 @@ func parseBulkString(reader *bufio.Reader) string {
 		fmt.Println("Bulk string length not equal to string length")
 		return ""
 	}
-	fmt.Printf("Received string: %s\n", str)
+	fmt.Printf("Received bulk string: %s\n", str)
 	return str
 }
 
@@ -88,7 +88,7 @@ func parseSimpleString(reader *bufio.Reader) string {
 
 	str = str[:len(str)-1] // remove '\r'
 	reader.Discard(1)      // '\n'
-	fmt.Printf("Received string: %s\n", str)
+	fmt.Printf("Received simple string: %s\n", str)
 	return str
 }
 
@@ -104,7 +104,6 @@ func parseCommand(reader *bufio.Reader) *RedisCommand {
 		if str == "" {
 			return nil
 		}
-		fmt.Println("Received string: ", str)
 
 		command = append(command, str)
 	}

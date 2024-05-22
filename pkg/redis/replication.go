@@ -194,20 +194,22 @@ func (r *redisServer) sendGETACKtoSlaves(acksChan *chan int) {
 			slaveAddr := currentSlave.conn.RemoteAddr().String()
 
 			writeBulkStringArray(slaveWriter, []string{"REPLCONF", "GETACK", "*"})
+			fmt.Printf("Sending GETACK to slave: %s\n", slaveAddr)
 			slaveWriter.Flush()
 
-			fmt.Printf("Sent GETACK to slave: %s\n", slaveAddr)
 			command := parseCommand(slaveReader)
 			if command == nil {
 				fmt.Printf("Slave returned nil: %s\n", slaveAddr)
 				return
 			}
 			if command.Name == "REPLCONF" && command.Parameters[0] == "ACK" {
+				currentSlave.pending = false
 				acks++
 				*acksChan <- acks
+				fmt.Printf("Slave returned ACK: %s\n", slaveAddr)
+				return
 			}
-			currentSlave.pending = false
-			fmt.Printf("Slave returned ACK: %s\n", slaveAddr)
+			fmt.Printf("Slave returned not ACK: %s\n", slaveAddr)
 		}(&r.connectedSlaves[i])
 	}
 	wg.Wait()
@@ -331,12 +333,15 @@ func (r *redisServer) handleWAIT(writer *bufio.Writer, command *RedisCommand) {
 		case acks = <-acksChan:
 			if acks >= replicas {
 				isDone = true
+				fmt.Printf("Got all required ACKS: %d\n", acks)
 			}
 		case <-timeoutChan:
 			isDone = true
 			acks = replicas
+			fmt.Printf("Timeout reached. Sending ACKS: %d\n", acks)
 		}
 	}
 
 	writeInteger(writer, fmt.Sprintf("%d", acks))
+	fmt.Printf("Received ACKS: %d\n", acks)
 }
