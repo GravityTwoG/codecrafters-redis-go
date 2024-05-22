@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"fmt"
 	"math/rand"
 	"strconv"
 )
@@ -16,12 +15,17 @@ func RandString(n int) string {
 	return string(b)
 }
 
-func HexToBin(hex string) (string, error) {
-	ui, err := strconv.ParseUint(hex, 16, 64)
-	if err != nil {
-		return "", err
+func HexToBin(hex string) ([]byte, error) {
+	binary := make([]byte, len(hex)/2)
+
+	for i := 0; i < len(binary); i++ {
+		// byte can be represented by 2 hex digits
+		ui, err := strconv.ParseUint(hex[2*i:2*i+2], 16, 8)
+		if err != nil {
+			return nil, err
+		}
+		binary[i] = byte(ui & 0xff)
 	}
 
-	// %016b indicates base 2, zero padded, with 16 characters
-	return fmt.Sprintf("%016b", ui), nil
+	return binary, nil
 }
