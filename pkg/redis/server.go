@@ -62,10 +62,14 @@ func NewRedisServer(host string, port string, replicaOf string) *redisServer {
 func (r *redisServer) Start() {
 	l, err := net.Listen("tcp", fmt.Sprintf("%s:%s", r.host, r.port))
 	if err != nil {
-		fmt.Println("Failed to bind to port 6379")
+		fmt.Printf("Failed to bind to port %s: %s\n", r.port, err.Error())
 		os.Exit(1)
 	}
 	defer l.Close()
+
+	if r.role == "slave" {
+		r.sendPINGtoMaster()
+	}
 
 	wg := &sync.WaitGroup{}
 	for {
@@ -83,6 +87,29 @@ func (r *redisServer) Start() {
 	}
 
 	wg.Wait()
+}
+
+func (r *redisServer) sendPINGtoMaster() {
+
+	conn, err := net.Dial("tcp", r.replicaOf)
+	if err != nil {
+		fmt.Println("Error connecting to master: ", err.Error())
+		return
+	}
+
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+
+	writer.Write([]byte{ARRAY_SPECIFIER, '1', '\r', '\n'})
+	writeBulkString(writer, "PING")
+	writer.Flush()
+
+	response := parseSimpleString(reader)
+	fmt.Printf("Master response: %s\n", response)
+	if string(response) != "+PONG" {
+		fmt.Println("Master response to PING not equal to PONG")
+		return
+	}
 }
 
 func (r *redisServer) handleConnection(conn net.Conn) {

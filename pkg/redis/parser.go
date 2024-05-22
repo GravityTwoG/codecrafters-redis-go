@@ -52,6 +52,46 @@ func parseBulkStringLen(reader *bufio.Reader) int {
 	return length
 }
 
+func parseBulkString(reader *bufio.Reader) string {
+	bulkStringLen := parseBulkStringLen(reader)
+	if bulkStringLen == -1 {
+		return ""
+	}
+
+	str, err := reader.ReadString('\r')
+	if err != nil {
+		fmt.Println("Error reading bytes: ", err.Error())
+		return ""
+	}
+	str = str[:len(str)-1] // remove '\r'
+	reader.Discard(1)      // '\n'
+	if bulkStringLen != len(str) {
+		fmt.Println("Bulk string length not equal to string length")
+		return ""
+	}
+	fmt.Printf("Received string: %s\n", str)
+	return str
+}
+
+func parseSimpleString(reader *bufio.Reader) string {
+	firstByte, err := reader.ReadByte()
+	if err != nil || firstByte != SIMPLE_STRING_SPECIFIER {
+		fmt.Println("Error reading byte: ", err.Error())
+		return ""
+	}
+
+	str, err := reader.ReadString('\r')
+	if err != nil {
+		fmt.Println("Error reading bytes: ", err.Error())
+		return ""
+	}
+
+	str = str[:len(str)-1] // remove '\r'
+	reader.Discard(1)      // '\n'
+	fmt.Printf("Received string: %s\n", str)
+	return str
+}
+
 func parseCommand(reader *bufio.Reader) *RedisCommand {
 	var command []string
 	parametersCount := parseParametersCount(reader)
@@ -60,18 +100,10 @@ func parseCommand(reader *bufio.Reader) *RedisCommand {
 	}
 
 	for i := 0; i < parametersCount; i++ {
-		bulkStringLen := parseBulkStringLen(reader)
-		if bulkStringLen == -1 {
+		str := parseBulkString(reader)
+		if str == "" {
 			return nil
 		}
-
-		str, err := reader.ReadString('\r')
-		if err != nil {
-			fmt.Println("Error reading bytes: ", err.Error())
-			return nil
-		}
-		str = str[:len(str)-1] // remove '\r'
-		reader.Discard(1)      // '\n'
 		fmt.Println("Received string: ", str)
 
 		command = append(command, str)
