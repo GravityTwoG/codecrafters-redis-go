@@ -77,7 +77,7 @@ func (r *redisServer) setupReplication() {
 		}
 
 		if command.Name == "SET" {
-			r.handleSETfromMaster(writer, command)
+			r.handleSETfromMaster(command)
 		} else if command.Name == "REPLCONF" {
 			r.handleREPLCONFfromMaster(writer, command)
 		} else if command.Name == "PING" {
@@ -153,38 +153,56 @@ func (r *redisServer) sendRDBFileToSlave(writer *bufio.Writer) {
 }
 
 func (r *redisServer) sendSETtoSlaves(command *RedisCommand) {
-	for _, slave := range r.connectedSlaves {
-		slaveWriter := bufio.NewWriter(slave)
+	wg := &sync.WaitGroup{}
 
-		strs := make([]string, 1+len(command.Parameters))
-		strs[0] = command.Name
-		copy(strs[1:], command.Parameters)
+	for i, _ := range r.connectedSlaves {
+		wg.Add(1)
+		go func(currentSlave *Slave) {
+			defer wg.Done()
+			slaveWriter := bufio.NewWriter(currentSlave.conn)
 
-		writeBulkStringArray(slaveWriter, strs)
-		slaveWriter.Flush()
+			strs := make([]string, 1+len(command.Parameters))
+			strs[0] = command.Name
+			copy(strs[1:], command.Parameters)
+
+			writeBulkStringArray(slaveWriter, strs)
+			slaveWriter.Flush()
+			currentSlave.pending = true
+			fmt.Printf("Sent SET to slave: %s\n", currentSlave.conn.RemoteAddr().String())
+		}(&r.connectedSlaves[i])
 	}
+	wg.Wait()
 }
 
 func (r *redisServer) sendGETACKtoSlaves() int {
 	acks := 0
 	wg := &sync.WaitGroup{}
 
-	for _, slave := range r.connectedSlaves {
+	for i, slave := range r.connectedSlaves {
+		if !slave.pending {
+			fmt.Printf("Slave not pending: %s\n", slave.conn.RemoteAddr().String())
+			continue
+		}
+
 		wg.Add(1)
-		go func(slave net.Conn) {
+		go func(currentSlave *Slave) {
 			defer wg.Done()
 
-			slaveWriter := bufio.NewWriter(slave)
-			slaveReader := bufio.NewReader(slave)
+			slaveWriter := bufio.NewWriter(currentSlave.conn)
+			slaveReader := bufio.NewReader(currentSlave.conn)
+			slaveAddr := currentSlave.conn.RemoteAddr().String()
 
 			writeBulkStringArray(slaveWriter, []string{"REPLCONF", "GETACK", "*"})
 			slaveWriter.Flush()
 
+			fmt.Printf("Sent GETACK to slave: %s\n", slaveAddr)
 			command := parseCommand(slaveReader)
 			if command.Name == "REPLCONF" && command.Parameters[0] == "ACK" {
 				acks++
 			}
-		}(slave)
+			currentSlave.pending = false
+			fmt.Printf("Slave returned ACK: %s\n", slaveAddr)
+		}(&r.connectedSlaves[i])
 	}
 	wg.Wait()
 
@@ -192,7 +210,9 @@ func (r *redisServer) sendGETACKtoSlaves() int {
 }
 
 func (r *redisServer) handleSlave(conn net.Conn, reader *bufio.Reader, writer *bufio.Writer) {
-	r.connectedSlaves = append(r.connectedSlaves, conn)
+	r.sendRDBFileToSlave(writer)
+
+	r.connectedSlaves = append(r.connectedSlaves, Slave{conn: conn, pending: false})
 }
 
 // From slave to master
@@ -227,11 +247,9 @@ func (r *redisServer) handlePSYNC(writer *bufio.Writer, command *RedisCommand) {
 	}
 
 	writeSimpleString(writer, fmt.Sprintf("FULLRESYNC %s %d", r.replicationId, r.replicationOffset))
-
-	r.sendRDBFileToSlave(writer)
 }
 
-func (r *redisServer) handleSETfromMaster(writer *bufio.Writer, command *RedisCommand) {
+func (r *redisServer) handleSETfromMaster(command *RedisCommand) {
 	// SET foo bar
 	if len(command.Parameters) == 2 {
 		key := command.Parameters[0]

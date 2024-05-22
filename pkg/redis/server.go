@@ -25,6 +25,11 @@ type RedisCommand struct {
 	Parameters []string
 }
 
+type Slave struct {
+	conn    net.Conn
+	pending bool
+}
+
 type redisServer struct {
 	host string
 	port string
@@ -32,7 +37,7 @@ type redisServer struct {
 	role string
 
 	slavePorts      []string
-	connectedSlaves []net.Conn
+	connectedSlaves []Slave
 
 	replicaOf              string
 	replicationId          string
@@ -58,7 +63,7 @@ func NewRedisServer(host string, port string, replicaOf string) *redisServer {
 		role: role,
 
 		slavePorts:      make([]string, 0),
-		connectedSlaves: make([]net.Conn, 0),
+		connectedSlaves: make([]Slave, 0),
 
 		replicaOf:              replicaOf,
 		replicationId:          replicationId,
