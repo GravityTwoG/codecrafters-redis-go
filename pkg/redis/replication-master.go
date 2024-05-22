@@ -60,8 +60,8 @@ func (r *redisServer) masterSendSET(command *RedisCommand) {
 }
 
 func (r *redisServer) masterSendGETACKtoReplica(
-	replica *Replica, doneChan *chan bool,
-) {
+	replica *Replica,
+) bool {
 	writer := bufio.NewWriter(replica.conn)
 	reader := bufio.NewReader(replica.conn)
 	replicaAddr := replica.conn.RemoteAddr().String()
@@ -71,19 +71,16 @@ func (r *redisServer) masterSendGETACKtoReplica(
 	writer.Flush()
 
 	command := parseCommand(reader)
-	if command == nil {
-		fmt.Printf("Slave returned nil: %s\n", replicaAddr)
-		*doneChan <- false
-		return
-	}
-	if command.Name == "REPLCONF" && command.Parameters[0] == "ACK" {
-		fmt.Printf("Slave returned ACK: %s\n", replicaAddr)
+	if command != nil &&
+		command.Name == "REPLCONF" &&
+		command.Parameters[0] == "ACK" {
+
 		replica.pending = false
-		*doneChan <- true
-		return
+
+		return true
 	}
-	fmt.Printf("Slave returned not ACK: %s\n", replicaAddr)
-	*doneChan <- false
+
+	return false
 }
 
 func (r *redisServer) masterSendGETACK(
@@ -103,33 +100,38 @@ func (r *redisServer) masterSendGETACK(
 			currentReplica.mutex.Lock()
 			defer currentReplica.mutex.Unlock()
 
-			doneChan := make(chan bool)
-			go r.masterSendGETACKtoReplica(currentReplica, &doneChan)
+			replicaAddr := currentReplica.conn.RemoteAddr().String()
 
-			timeoutTicker := time.NewTicker(timeout)
+			doneChan := make(chan bool)
+			go func() {
+				doneChan <- r.masterSendGETACKtoReplica(currentReplica)
+			}()
+
 			select {
 			case acknowledged := <-doneChan:
 				if acknowledged {
 					acksChan <- 1
+					fmt.Printf("Slave acknowledged GETACK: %s\n", replicaAddr)
+				} else {
+					fmt.Printf("Slave not acknowledged GETACK: %s\n", replicaAddr)
 				}
-			case <-timeoutTicker.C:
-				fmt.Printf("Timeout sending GETACK to slave: %s\n", currentReplica.conn.RemoteAddr().String())
+
+			case <-time.After(timeout):
+				fmt.Printf("Timeout sending GETACK to slave: %s\n", replicaAddr)
 			}
-			timeoutTicker.Stop()
 		}(&r.connectedReplicas[i])
 	}
 
 	acks := 0
-	timeoutTicker := time.NewTicker(timeout)
 	for {
 		select {
 		case <-acksChan:
 			acks++
 			if acks == replicas {
-				timeoutTicker.Stop()
 				return acks
 			}
-		case <-timeoutTicker.C:
+
+		case <-time.After(timeout):
 			return acks
 		}
 	}
