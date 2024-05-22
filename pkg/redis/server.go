@@ -101,16 +101,6 @@ func (r *redisServer) Start() {
 }
 
 func (r *redisServer) handleConnection(conn net.Conn) {
-	reader := bufio.NewReader(conn)
-	writer := bufio.NewWriter(conn)
-
-	for {
-		r.handleCommand(conn, reader, writer)
-		writer.Flush()
-	}
-}
-
-func (r *redisServer) handleCommand(conn net.Conn, reader *bufio.Reader, writer *bufio.Writer) {
 	slaveConnection := false
 	defer func() {
 		if !slaveConnection {
@@ -118,11 +108,25 @@ func (r *redisServer) handleCommand(conn net.Conn, reader *bufio.Reader, writer 
 		}
 	}()
 
-	command := parseCommand(reader)
-	if command == nil {
-		return
-	}
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
 
+	for {
+		command := parseCommand(reader)
+		if command == nil {
+			return
+		}
+
+		if command.Name == "PSYNC" {
+			slaveConnection = true
+		}
+
+		r.handleCommand(conn, reader, writer, command)
+		writer.Flush()
+	}
+}
+
+func (r *redisServer) handleCommand(conn net.Conn, reader *bufio.Reader, writer *bufio.Writer, command *RedisCommand) {
 	if command.Name == "PING" {
 		writeSimpleString(writer, "PONG")
 		return
@@ -154,7 +158,6 @@ func (r *redisServer) handleCommand(conn net.Conn, reader *bufio.Reader, writer 
 	}
 
 	if command.Name == "PSYNC" {
-		slaveConnection = true
 		r.handlePSYNC(writer, command)
 		r.handleSlave(conn, reader, writer)
 		return
