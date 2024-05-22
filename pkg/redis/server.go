@@ -230,7 +230,7 @@ func (r *redisServer) handleREPLCONF(writer *bufio.Writer, command *RedisCommand
 		return
 	}
 
-	if strings.ToUpper(command.Parameters[0]) == "listening-port" {
+	if strings.ToUpper(command.Parameters[0]) == "LISTENING-PORT" {
 		slavePort := command.Parameters[1]
 		r.slavePorts = append(r.slavePorts, slavePort)
 		writeSimpleString(writer, "OK")
@@ -240,7 +240,7 @@ func (r *redisServer) handleREPLCONF(writer *bufio.Writer, command *RedisCommand
 	if strings.ToUpper(command.Parameters[0]) == "CAPA" &&
 		strings.ToUpper(command.Parameters[1]) == "PSYNC2" {
 
-		writeArrayLength(writer, 0)
+		writeSimpleString(writer, "OK")
 		return
 	}
 
