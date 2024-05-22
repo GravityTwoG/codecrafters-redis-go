@@ -10,9 +10,13 @@ func writeSimpleString(writer *bufio.Writer, str string) {
 	writer.Write([]byte(str + "\r\n"))
 }
 
-func writeBulkString(writer *bufio.Writer, str string) {
+func writeBulkStringSpecifier(writer *bufio.Writer, length int) {
 	writer.Write([]byte{BULK_STRING_SPECIFIER})
-	writer.Write([]byte(strconv.Itoa(len(str)) + "\r\n"))
+	writer.Write([]byte(strconv.Itoa(length) + "\r\n"))
+}
+
+func writeBulkString(writer *bufio.Writer, str string) {
+	writeBulkStringSpecifier(writer, len(str))
 	writer.Write([]byte(str + "\r\n"))
 }
 

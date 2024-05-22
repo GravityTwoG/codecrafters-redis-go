@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"strings"
+
+	"github.com/codecrafters-io/redis-starter-go/pkg/utils"
 )
 
 func (r *redisServer) handleReplication() {
@@ -93,4 +95,50 @@ func (r *redisServer) sendPSYNCtoMaster(reader *bufio.Reader, writer *bufio.Writ
 	}
 
 	return nil
+}
+
+func (r *redisServer) sendRDBFile(writer *bufio.Writer) {
+	content, err := utils.HexToBin("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
+	if err != nil {
+		fmt.Println("Error converting hex to binary: ", err.Error())
+		return
+	}
+
+	writeBulkStringSpecifier(writer, len(content))
+	writer.Write([]byte(content))
+	writer.Flush()
+}
+
+func (r *redisServer) handleREPLCONF(writer *bufio.Writer, command *RedisCommand) {
+	if len(command.Parameters) != 2 {
+		writeError(writer, "ERROR")
+		return
+	}
+
+	if strings.ToUpper(command.Parameters[0]) == "LISTENING-PORT" {
+		slavePort := command.Parameters[1]
+		r.slavePorts = append(r.slavePorts, slavePort)
+		writeSimpleString(writer, "OK")
+		return
+	}
+
+	if strings.ToUpper(command.Parameters[0]) == "CAPA" &&
+		strings.ToUpper(command.Parameters[1]) == "PSYNC2" {
+
+		writeSimpleString(writer, "OK")
+		return
+	}
+
+	writeError(writer, "ERROR")
+}
+
+func (r *redisServer) handlePSYNC(writer *bufio.Writer, command *RedisCommand) {
+	if len(command.Parameters) != 2 {
+		writeError(writer, "ERROR")
+		return
+	}
+
+	writeSimpleString(writer, fmt.Sprintf("FULLRESYNC %s %d", r.replicationId, r.replicationOffset))
+
+	r.sendRDBFile(writer)
 }

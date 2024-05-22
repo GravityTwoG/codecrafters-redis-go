@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/codecrafters-io/redis-starter-go/pkg/redis/rand"
 	redisstore "github.com/codecrafters-io/redis-starter-go/pkg/redis/store"
+	"github.com/codecrafters-io/redis-starter-go/pkg/utils"
 )
 
 const SIMPLE_STRING_SPECIFIER = '+'
@@ -44,7 +44,7 @@ type redisServer struct {
 func NewRedisServer(host string, port string, replicaOf string) *redisServer {
 
 	var role = "master"
-	var replicationId = rand.RandString(40)
+	var replicationId = utils.RandString(40)
 	if replicaOf != "" {
 		role = "slave"
 		replicationId = ""
@@ -222,36 +222,4 @@ func (r *redisServer) handleINFO(writer *bufio.Writer, command *RedisCommand) {
 	}
 
 	writeError(writer, "ERROR")
-}
-
-func (r *redisServer) handleREPLCONF(writer *bufio.Writer, command *RedisCommand) {
-	if len(command.Parameters) != 2 {
-		writeError(writer, "ERROR")
-		return
-	}
-
-	if strings.ToUpper(command.Parameters[0]) == "LISTENING-PORT" {
-		slavePort := command.Parameters[1]
-		r.slavePorts = append(r.slavePorts, slavePort)
-		writeSimpleString(writer, "OK")
-		return
-	}
-
-	if strings.ToUpper(command.Parameters[0]) == "CAPA" &&
-		strings.ToUpper(command.Parameters[1]) == "PSYNC2" {
-
-		writeSimpleString(writer, "OK")
-		return
-	}
-
-	writeError(writer, "ERROR")
-}
-
-func (r *redisServer) handlePSYNC(writer *bufio.Writer, command *RedisCommand) {
-	if len(command.Parameters) != 2 {
-		writeError(writer, "ERROR")
-		return
-	}
-
-	writeSimpleString(writer, fmt.Sprintf("FULLRESYNC %s %d", r.replicationId, r.replicationOffset))
 }
