@@ -39,6 +39,27 @@ func (r *redisServer) setupReplication() {
 		fmt.Println("Error sending PSYNC to master: ", err.Error())
 		return
 	}
+
+	fmt.Printf("Waiting for RDB FILE from master...\n")
+
+	// Get get RDB FILE from master
+	rdbFileLen := parseBulkStringLen(reader)
+	fmt.Printf("RDB FILE length: %d\n", rdbFileLen)
+	reader.Discard(rdbFileLen)
+
+	fmt.Printf("RDB FILE received\n")
+
+	// Handle commands from master
+	for {
+		command := parseCommand(reader)
+		if command == nil {
+			break
+		}
+
+		r.handleSETfromMaster(writer, command)
+		writer.Flush()
+	}
+
 }
 
 func (r *redisServer) sendPINGtoMaster(reader *bufio.Reader, writer *bufio.Writer) error {
@@ -85,20 +106,6 @@ func (r *redisServer) sendPSYNCtoMaster(reader *bufio.Reader, writer *bufio.Writ
 	fmt.Printf("Master response: %s\n", response)
 	if !strings.Contains(response, "FULLRESYNC") {
 		return errors.New("master response to PSYNC not equal to FULLRESYNC")
-	}
-
-	// Get get RDB FILE from master
-	rdbFileLen := parseBulkStringLen(reader)
-	reader.Discard(rdbFileLen)
-
-	// Handle commands from master
-	for {
-		command := parseCommand(reader)
-		if command == nil {
-			break
-		}
-
-		r.handleSETfromMaster(writer, command)
 	}
 
 	return nil
