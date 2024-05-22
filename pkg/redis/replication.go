@@ -197,6 +197,10 @@ func (r *redisServer) sendGETACKtoSlaves(acksChan *chan int) {
 
 			fmt.Printf("Sent GETACK to slave: %s\n", slaveAddr)
 			command := parseCommand(slaveReader)
+			if command == nil {
+				fmt.Printf("Slave returned nil: %s\n", slaveAddr)
+				return
+			}
 			if command.Name == "REPLCONF" && command.Parameters[0] == "ACK" {
 				acks++
 				*acksChan <- acks
@@ -293,7 +297,7 @@ func (r *redisServer) handleREPLCONFfromMaster(writer *bufio.Writer, command *Re
 func (r *redisServer) handleWAIT(writer *bufio.Writer, command *RedisCommand) {
 	if len(command.Parameters) != 2 {
 		writeError(writer, "ERROR")
-		fmt.Println("Error in command WAIT: invalid len %d", len(command.Parameters))
+		fmt.Printf("Error in command WAIT: invalid len %d\n", len(command.Parameters))
 		return
 	}
 
