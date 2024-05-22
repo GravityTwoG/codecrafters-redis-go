@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/pkg/utils"
@@ -164,23 +165,28 @@ func (r *redisServer) sendSETtoSlaves(command *RedisCommand) {
 	}
 }
 
-func (r *redisServer) sendPINGtoSlaves(writer *bufio.Writer) int {
-	for _, slave := range r.connectedSlaves {
-		slaveWriter := bufio.NewWriter(slave)
-		writeBulkStringArray(slaveWriter, []string{"REPLCONF", "GETACK", "*"})
-		slaveWriter.Flush()
-	}
-
+func (r *redisServer) sendGETACKtoSlaves() int {
 	acks := 0
+	wg := &sync.WaitGroup{}
 
 	for _, slave := range r.connectedSlaves {
-		slaveReader := bufio.NewReader(slave)
-		command := parseCommand(slaveReader)
+		wg.Add(1)
+		go func(slave net.Conn) {
+			defer wg.Done()
 
-		if command.Name == "REPLCONF" && command.Parameters[0] == "ACK" {
-			acks++
-		}
+			slaveWriter := bufio.NewWriter(slave)
+			slaveReader := bufio.NewReader(slave)
+
+			writeBulkStringArray(slaveWriter, []string{"REPLCONF", "GETACK", "*"})
+			slaveWriter.Flush()
+
+			command := parseCommand(slaveReader)
+			if command.Name == "REPLCONF" && command.Parameters[0] == "ACK" {
+				acks++
+			}
+		}(slave)
 	}
+	wg.Wait()
 
 	return acks
 }
@@ -287,7 +293,7 @@ func (r *redisServer) handleWAIT(writer *bufio.Writer, command *RedisCommand) {
 	done := make(chan bool, 1)
 
 	go func() {
-		acks := r.sendPINGtoSlaves(writer)
+		acks := r.sendGETACKtoSlaves()
 		if acks >= replicas {
 			done <- true
 		}
