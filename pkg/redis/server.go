@@ -89,7 +89,6 @@ func (r *redisServer) Start() {
 		wg.Add(1)
 		go func() {
 			r.handleConnection(conn)
-			defer conn.Close()
 			defer wg.Done()
 		}()
 	}
@@ -98,7 +97,6 @@ func (r *redisServer) Start() {
 }
 
 func (r *redisServer) handleConnection(conn net.Conn) {
-
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
 
@@ -109,6 +107,13 @@ func (r *redisServer) handleConnection(conn net.Conn) {
 }
 
 func (r *redisServer) handleCommand(conn net.Conn, reader *bufio.Reader, writer *bufio.Writer) {
+	slaveConnection := false
+	defer func() {
+		if !slaveConnection {
+			conn.Close()
+		}
+	}()
+
 	command := parseCommand(reader)
 	if command == nil {
 		return
@@ -145,6 +150,7 @@ func (r *redisServer) handleCommand(conn net.Conn, reader *bufio.Reader, writer 
 	}
 
 	if command.Name == "PSYNC" {
+		slaveConnection = true
 		r.handlePSYNC(writer, command)
 		r.handleSlave(conn, reader, writer)
 		return
