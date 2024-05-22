@@ -164,6 +164,27 @@ func (r *redisServer) sendSETtoSlaves(command *RedisCommand) {
 	}
 }
 
+func (r *redisServer) sendPINGtoSlaves(writer *bufio.Writer) int {
+	for _, slave := range r.connectedSlaves {
+		slaveWriter := bufio.NewWriter(slave)
+		writeBulkStringArray(slaveWriter, []string{"REPLCONF", "GETACK", "*"})
+		slaveWriter.Flush()
+	}
+
+	acks := 0
+
+	for _, slave := range r.connectedSlaves {
+		slaveReader := bufio.NewReader(slave)
+		command := parseCommand(slaveReader)
+
+		if command.Name == "REPLCONF" && command.Parameters[0] == "ACK" {
+			acks++
+		}
+	}
+
+	return acks
+}
+
 func (r *redisServer) handleSlave(conn net.Conn, reader *bufio.Reader, writer *bufio.Writer) {
 	r.connectedSlaves = append(r.connectedSlaves, conn)
 }
@@ -243,4 +264,46 @@ func (r *redisServer) handleREPLCONFfromMaster(writer *bufio.Writer, command *Re
 	}
 
 	writeError(writer, "ERROR")
+}
+
+func (r *redisServer) handleWAIT(writer *bufio.Writer, command *RedisCommand) {
+	if len(command.Parameters) != 2 {
+		writeError(writer, "ERROR")
+		return
+	}
+
+	replicas, err := strconv.Atoi(command.Parameters[0])
+	if err != nil {
+		writeError(writer, "ERROR")
+		return
+	}
+	timeoutMs, err := strconv.Atoi(command.Parameters[1])
+	if err != nil {
+		writeError(writer, "ERROR")
+		return
+	}
+
+	timeoutChan := time.After(time.Duration(timeoutMs) * time.Millisecond)
+	done := make(chan bool, 1)
+
+	go func() {
+		acks := r.sendPINGtoSlaves(writer)
+		if acks >= replicas {
+			done <- true
+		}
+	}()
+
+	go func() {
+		select {
+		case <-timeoutChan:
+			done <- true
+			return
+		case <-done:
+			return
+		}
+	}()
+
+	<-done
+
+	writeInteger(writer, fmt.Sprintf("%d", len(r.connectedSlaves)))
 }

@@ -81,8 +81,8 @@ func (r *redisServer) Start() {
 	if r.role == "slave" {
 		wg.Add(1)
 		go func() {
-			r.setupReplication()
 			defer wg.Done()
+			r.setupReplication()
 		}()
 	}
 
@@ -94,8 +94,8 @@ func (r *redisServer) Start() {
 		}
 		wg.Add(1)
 		go func() {
-			r.handleConnection(conn)
 			defer wg.Done()
+			r.handleConnection(conn)
 		}()
 	}
 
@@ -245,13 +245,4 @@ func (r *redisServer) handleINFO(writer *bufio.Writer, command *RedisCommand) {
 	}
 
 	writeError(writer, "ERROR")
-}
-
-func (r *redisServer) handleWAIT(writer *bufio.Writer, command *RedisCommand) {
-	if len(command.Parameters) != 2 {
-		writeError(writer, "ERROR")
-		return
-	}
-
-	writeInteger(writer, fmt.Sprintf("%d", len(r.connectedSlaves)))
 }
