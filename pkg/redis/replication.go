@@ -13,6 +13,7 @@ import (
 )
 
 func (r *redisServer) setupReplication() {
+	// Connect to master
 	conn, err := net.Dial("tcp", r.replicaOf)
 	if err != nil {
 		fmt.Println("Error connecting to master: ", err.Error())
@@ -56,7 +57,12 @@ func (r *redisServer) setupReplication() {
 			break
 		}
 
-		r.handleSETfromMaster(writer, command)
+		if command.Name == "SET" {
+			r.handleSETfromMaster(writer, command)
+		} else if command.Name == "REPLCONF" {
+			r.handleREPLCONFfromMaster(writer, command)
+		}
+
 		writer.Flush()
 	}
 }
@@ -176,10 +182,6 @@ func (r *redisServer) handlePSYNC(writer *bufio.Writer, command *RedisCommand) {
 }
 
 func (r *redisServer) handleSETfromMaster(writer *bufio.Writer, command *RedisCommand) {
-	if command.Name != "SET" {
-		return
-	}
-
 	// SET foo bar
 	if len(command.Parameters) == 2 {
 		key := command.Parameters[0]
@@ -203,4 +205,19 @@ func (r *redisServer) handleSETfromMaster(writer *bufio.Writer, command *RedisCo
 		r.store.SetWithTTL(key, value, duration)
 		fmt.Printf("SLAVE: key: %s, value: %s, duration: %s\n", key, value, duration)
 	}
+}
+
+func (r *redisServer) handleREPLCONFfromMaster(writer *bufio.Writer, command *RedisCommand) {
+	if len(command.Parameters) != 2 {
+		writeError(writer, "ERROR")
+		return
+	}
+
+	if strings.ToUpper((command.Parameters[0])) == "GETACK" &&
+		command.Parameters[1] == "*" {
+		writeBulkStringArray(writer, []string{"REPLCONF", "ACK", "0"})
+		return
+	}
+
+	writeError(writer, "ERROR")
 }
