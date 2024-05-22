@@ -73,6 +73,7 @@ func (r *redisServer) masterSendGETACKtoReplica(
 	command := parseCommand(reader)
 	if command == nil {
 		doneChan <- false
+
 		fmt.Printf("Slave returned nil: %s\n", replicaAddr)
 		return
 	}
@@ -88,41 +89,52 @@ func (r *redisServer) masterSendGETACKtoReplica(
 }
 
 func (r *redisServer) masterSendGETACK(
-	replicas int, timeoutMs int,
+	replicas int, timeout time.Duration,
 ) int {
-
 	acks := 0
-	timeoutTicker := time.NewTicker(time.Duration(timeoutMs) * time.Millisecond)
+	acksChan := make(chan int)
 
-	wg := &sync.WaitGroup{}
+	fmt.Printf("Sending GETACK to slaves with timeout: %s\n", timeout.String())
+
 	for i, replica := range r.connectedReplicas {
 		if !replica.pending {
 			fmt.Printf("Slave not pending: %s\n", replica.conn.RemoteAddr().String())
 			continue
 		}
 
-		wg.Add(1)
 		go func(currentReplica *Replica) {
-			defer wg.Done()
 			currentReplica.mutex.Lock()
 			defer currentReplica.mutex.Unlock()
 
 			doneChan := make(chan bool)
 			go r.masterSendGETACKtoReplica(currentReplica, doneChan)
 
+			timeoutTicker := time.NewTicker(timeout)
 			select {
+			case acknowledged := <-doneChan:
+				if acknowledged {
+					acksChan <- 1
+				}
 			case <-timeoutTicker.C:
 				fmt.Printf("Timeout sending GETACK to slave: %s\n", currentReplica.conn.RemoteAddr().String())
-			case ack := <-doneChan:
-				if ack {
-					acks++
-				}
 			}
+			timeoutTicker.Stop()
 		}(&r.connectedReplicas[i])
 	}
-	wg.Wait()
 
-	return acks
+	timeoutTicker := time.NewTicker(timeout)
+	for {
+		select {
+		case <-acksChan:
+			acks++
+			if acks == replicas {
+				timeoutTicker.Stop()
+				return acks
+			}
+		case <-timeoutTicker.C:
+			return acks
+		}
+	}
 }
 
 func (r *redisServer) masterHandleSlave(conn net.Conn, _ *bufio.Reader, writer *bufio.Writer) {
@@ -187,7 +199,7 @@ func (r *redisServer) masterHandleWAIT(writer *bufio.Writer, command *RedisComma
 		return
 	}
 
-	acks := r.masterSendGETACK(replicas, timeoutMs)
+	acks := r.masterSendGETACK(replicas, time.Duration(timeoutMs+20)*time.Millisecond)
 	writeInteger(writer, fmt.Sprintf("%d", acks))
 	fmt.Printf("Received ACKS: %d\n", acks)
 }
