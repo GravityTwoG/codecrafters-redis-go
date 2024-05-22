@@ -155,7 +155,7 @@ func (r *redisServer) sendRDBFileToSlave(writer *bufio.Writer) {
 func (r *redisServer) sendSETtoSlaves(command *RedisCommand) {
 	wg := &sync.WaitGroup{}
 
-	for i, _ := range r.connectedSlaves {
+	for i := range r.connectedSlaves {
 		wg.Add(1)
 		go func(currentSlave *Slave) {
 			defer wg.Done()
@@ -293,17 +293,20 @@ func (r *redisServer) handleREPLCONFfromMaster(writer *bufio.Writer, command *Re
 func (r *redisServer) handleWAIT(writer *bufio.Writer, command *RedisCommand) {
 	if len(command.Parameters) != 2 {
 		writeError(writer, "ERROR")
+		fmt.Println("Error in command WAIT: invalid len %d", len(command.Parameters))
 		return
 	}
 
 	replicas, err := strconv.Atoi(command.Parameters[0])
 	if err != nil {
 		writeError(writer, "ERROR")
+		fmt.Println("Error converting replicas: ", err.Error())
 		return
 	}
 	timeoutMs, err := strconv.Atoi(command.Parameters[1])
 	if err != nil {
 		writeError(writer, "ERROR")
+		fmt.Println("Error converting timeout: ", err.Error())
 		return
 	}
 
