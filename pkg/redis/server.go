@@ -248,7 +248,7 @@ func (r *redisServer) handleREPLCONF(writer *bufio.Writer, command *RedisCommand
 }
 
 func (r *redisServer) handlePSYNC(writer *bufio.Writer, command *RedisCommand) {
-	if len(command.Parameters) != 3 {
+	if len(command.Parameters) != 2 {
 		writeError(writer, "ERROR")
 		return
 	}
