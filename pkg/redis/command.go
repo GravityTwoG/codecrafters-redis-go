@@ -28,7 +28,7 @@ func parseParametersCount(reader *bufio.Reader) int {
 	}
 	parametersCountStr = parametersCountStr[:len(parametersCountStr)-1] // remove '\r'
 	reader.Discard(1)                                                   // '\n'
-	fmt.Printf("Strings count: %s\n", parametersCountStr)
+	fmt.Printf("Parameters count: %s\n", parametersCountStr)
 
 	count, err := strconv.Atoi(parametersCountStr)
 	if err != nil {
@@ -51,7 +51,6 @@ func parseBulkStringLen(reader *bufio.Reader) int {
 	}
 	bulkStringLen = bulkStringLen[:len(bulkStringLen)-1] // remove '\r'
 	reader.Discard(1)                                    // '\n'
-	fmt.Printf("Bulk string length: %s\n", bulkStringLen)
 
 	length, err := strconv.Atoi(bulkStringLen)
 	if err != nil {
@@ -78,7 +77,7 @@ func parseBulkString(reader *bufio.Reader) string {
 		fmt.Println("Bulk string length not equal to string length")
 		return ""
 	}
-	fmt.Printf("Received bulk string: %s\n", str)
+	fmt.Printf("Bulk string $%d %s\n", bulkStringLen, str)
 	return str
 }
 
@@ -102,12 +101,12 @@ func parseSimpleString(reader *bufio.Reader) string {
 }
 
 func parseCommand(reader *bufio.Reader) *RedisCommand {
-	var command []string
 	parametersCount := parseParametersCount(reader)
 	if parametersCount == -1 {
 		return nil
 	}
 
+	command := make([]string, 0, parametersCount)
 	for i := 0; i < parametersCount; i++ {
 		str := parseBulkString(reader)
 		if str == "" {
@@ -116,6 +115,7 @@ func parseCommand(reader *bufio.Reader) *RedisCommand {
 
 		command = append(command, str)
 	}
+	fmt.Printf("Command parsed\n")
 
 	return &RedisCommand{
 		Name:       command[0],

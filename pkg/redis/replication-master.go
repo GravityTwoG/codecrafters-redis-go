@@ -71,22 +71,19 @@ func (r *redisServer) masterSendGETACKtoReplica(
 	writer.Flush()
 
 	command := parseCommand(reader)
-	fmt.Printf("PARSED\n")
 	if command == nil {
-		*doneChan <- false
-
 		fmt.Printf("Slave returned nil: %s\n", replicaAddr)
+		*doneChan <- false
 		return
 	}
 	if command.Name == "REPLCONF" && command.Parameters[0] == "ACK" {
+		fmt.Printf("Slave returned ACK: %s\n", replicaAddr)
 		replica.pending = false
 		*doneChan <- true
-
-		fmt.Printf("Slave returned ACK: %s\n", replicaAddr)
 		return
 	}
-	*doneChan <- false
 	fmt.Printf("Slave returned not ACK: %s\n", replicaAddr)
+	*doneChan <- false
 }
 
 func (r *redisServer) masterSendGETACK(
