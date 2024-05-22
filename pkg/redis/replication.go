@@ -66,6 +66,7 @@ func (r *redisServer) setupReplication() {
 
 	fmt.Printf("RDB FILE received\n")
 
+	r.slaveReplicationOffset = 0
 	// Handle commands from master
 	for {
 		countingReader.n = 0
@@ -78,10 +79,14 @@ func (r *redisServer) setupReplication() {
 			r.handleSETfromMaster(writer, command)
 		} else if command.Name == "REPLCONF" {
 			r.handleREPLCONFfromMaster(writer, command)
+		} else if command.Name == "PING" {
+			fmt.Printf("PING from master\n")
 		}
 
 		writer.Flush()
+
 		r.slaveReplicationOffset += countingReader.n
+		fmt.Printf("Slave replication offset: %d\n", r.slaveReplicationOffset)
 	}
 }
 
