@@ -23,6 +23,7 @@ const ARRAY_SPECIFIER = '*'
 type Slave struct {
 	conn    net.Conn
 	pending bool
+	mutex   *sync.Mutex
 }
 
 type redisServer struct {
@@ -201,7 +202,7 @@ func (r *redisServer) handleSET(writer *bufio.Writer, command *RedisCommand) {
 		fmt.Printf("key: %s, value: %s, duration: %s\n", key, value, duration)
 	}
 
-	r.sendSETtoSlaves(command)
+	go r.sendSETtoSlaves(command)
 }
 
 func (r *redisServer) handleGET(writer *bufio.Writer, command *RedisCommand) {

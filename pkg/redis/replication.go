@@ -159,6 +159,9 @@ func (r *redisServer) sendSETtoSlaves(command *RedisCommand) {
 		wg.Add(1)
 		go func(currentSlave *Slave) {
 			defer wg.Done()
+			currentSlave.mutex.Lock()
+			defer currentSlave.mutex.Unlock()
+
 			slaveWriter := bufio.NewWriter(currentSlave.conn)
 
 			writeBulkStringArray(slaveWriter, command.ToStringArray())
@@ -183,6 +186,8 @@ func (r *redisServer) sendGETACKtoSlaves(acksChan *chan int) {
 		wg.Add(1)
 		go func(currentSlave *Slave) {
 			defer wg.Done()
+			currentSlave.mutex.Lock()
+			defer currentSlave.mutex.Unlock()
 
 			slaveWriter := bufio.NewWriter(currentSlave.conn)
 			slaveReader := bufio.NewReader(currentSlave.conn)
@@ -212,7 +217,11 @@ func (r *redisServer) sendGETACKtoSlaves(acksChan *chan int) {
 func (r *redisServer) handleSlave(conn net.Conn, _ *bufio.Reader, writer *bufio.Writer) {
 	r.sendRDBFileToSlave(writer)
 
-	r.connectedSlaves = append(r.connectedSlaves, Slave{conn: conn, pending: false})
+	r.connectedSlaves = append(r.connectedSlaves, Slave{
+		conn:    conn,
+		pending: false,
+		mutex:   &sync.Mutex{},
+	})
 }
 
 // From slave to master
