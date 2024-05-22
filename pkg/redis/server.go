@@ -20,11 +20,6 @@ const INTEGER_SPECIFIER = ':'
 const BULK_STRING_SPECIFIER = '$'
 const ARRAY_SPECIFIER = '*'
 
-type RedisCommand struct {
-	Name       string
-	Parameters []string
-}
-
 type Slave struct {
 	conn    net.Conn
 	pending bool
@@ -175,7 +170,7 @@ func (r *redisServer) handleCommand(conn net.Conn, reader *bufio.Reader, writer 
 		return
 	}
 
-	writeError(writer, "ERROR")
+	writeError(writer, "ERROR: Unknown command")
 }
 
 func (r *redisServer) handleSET(writer *bufio.Writer, command *RedisCommand) {
@@ -196,7 +191,7 @@ func (r *redisServer) handleSET(writer *bufio.Writer, command *RedisCommand) {
 		value := command.Parameters[1]
 		durationMs, err := strconv.Atoi(command.Parameters[3])
 		if err != nil {
-			writeError(writer, "ERROR")
+			writeError(writer, "ERROR: Invalid duration")
 			return
 		}
 
@@ -239,15 +234,15 @@ func (r *redisServer) handleINFO(writer *bufio.Writer, command *RedisCommand) {
 			response += fmt.Sprintf("connected_slaves:%d\r\n", len(r.connectedSlaves))
 			response += fmt.Sprintf("master_replid:%s\r\n", r.replicationId)
 			response += fmt.Sprintf("master_repl_offset:%d\r\n", r.replicationOffset)
-			response += fmt.Sprintf("second_repl_offset:-1\r\n")
-			response += fmt.Sprintf("repl_backlog_active:0\r\n")
-			response += fmt.Sprintf("repl_backlog_size:1048576\r\n")
-			response += fmt.Sprintf("repl_backlog_first_byte_offset:0\r\n")
-			response += fmt.Sprintf("repl_backlog_histlen:0")
+			response += fmt.Sprintf("second_repl_offset:%d\r\n", -1)
+			response += fmt.Sprintf("repl_backlog_active:%d\r\n", 0)
+			response += fmt.Sprintf("repl_backlog_size:%d\r\n", 1048576)
+			response += fmt.Sprintf("repl_backlog_first_byte_offset:%d\r\n", 0)
+			response += fmt.Sprintf("repl_backlog_histlen:%d", 0)
 			writeBulkString(writer, response)
 			return
 		}
 	}
 
-	writeError(writer, "ERROR")
+	writeError(writer, "ERROR: INFO. Invalid number of parameters")
 }

@@ -161,11 +161,7 @@ func (r *redisServer) sendSETtoSlaves(command *RedisCommand) {
 			defer wg.Done()
 			slaveWriter := bufio.NewWriter(currentSlave.conn)
 
-			strs := make([]string, 1+len(command.Parameters))
-			strs[0] = command.Name
-			copy(strs[1:], command.Parameters)
-
-			writeBulkStringArray(slaveWriter, strs)
+			writeBulkStringArray(slaveWriter, command.ToStringArray())
 			slaveWriter.Flush()
 			currentSlave.pending = true
 			fmt.Printf("Sent SET to slave: %s\n", currentSlave.conn.RemoteAddr().String())
@@ -213,7 +209,7 @@ func (r *redisServer) sendGETACKtoSlaves(acksChan *chan int) {
 	close(*acksChan)
 }
 
-func (r *redisServer) handleSlave(conn net.Conn, reader *bufio.Reader, writer *bufio.Writer) {
+func (r *redisServer) handleSlave(conn net.Conn, _ *bufio.Reader, writer *bufio.Writer) {
 	r.sendRDBFileToSlave(writer)
 
 	r.connectedSlaves = append(r.connectedSlaves, Slave{conn: conn, pending: false})
@@ -222,7 +218,7 @@ func (r *redisServer) handleSlave(conn net.Conn, reader *bufio.Reader, writer *b
 // From slave to master
 func (r *redisServer) handleREPLCONF(writer *bufio.Writer, command *RedisCommand) {
 	if len(command.Parameters) != 2 {
-		writeError(writer, "ERROR")
+		writeError(writer, "ERROR: REPLCONF. Invalid number of parameters")
 		return
 	}
 
@@ -240,13 +236,13 @@ func (r *redisServer) handleREPLCONF(writer *bufio.Writer, command *RedisCommand
 		return
 	}
 
-	writeError(writer, "ERROR")
+	writeError(writer, "ERROR: REPLCONF. Invalid parameters")
 }
 
 // From slave to master
 func (r *redisServer) handlePSYNC(writer *bufio.Writer, command *RedisCommand) {
 	if len(command.Parameters) != 2 {
-		writeError(writer, "ERROR")
+		writeError(writer, "ERROR: PSYNC. Invalid number of parameters")
 		return
 	}
 
@@ -281,7 +277,7 @@ func (r *redisServer) handleSETfromMaster(command *RedisCommand) {
 
 func (r *redisServer) handleREPLCONFfromMaster(writer *bufio.Writer, command *RedisCommand) {
 	if len(command.Parameters) != 2 {
-		writeError(writer, "ERROR")
+		writeError(writer, "ERROR: REPLCONF. Invalid number of parameters")
 		return
 	}
 
@@ -291,25 +287,25 @@ func (r *redisServer) handleREPLCONFfromMaster(writer *bufio.Writer, command *Re
 		return
 	}
 
-	writeError(writer, "ERROR")
+	writeError(writer, "ERROR: REPLCONF. Invalid parameters")
 }
 
 func (r *redisServer) handleWAIT(writer *bufio.Writer, command *RedisCommand) {
 	if len(command.Parameters) != 2 {
-		writeError(writer, "ERROR")
+		writeError(writer, "ERROR: WAIT. Invalid number of parameters")
 		fmt.Printf("Error in command WAIT: invalid len %d\n", len(command.Parameters))
 		return
 	}
 
 	replicas, err := strconv.Atoi(command.Parameters[0])
 	if err != nil {
-		writeError(writer, "ERROR")
+		writeError(writer, "ERROR: WAIT. Invalid number of replicas")
 		fmt.Println("Error converting replicas: ", err.Error())
 		return
 	}
 	timeoutMs, err := strconv.Atoi(command.Parameters[1])
 	if err != nil {
-		writeError(writer, "ERROR")
+		writeError(writer, "ERROR: WAIT. Invalid timeout")
 		fmt.Println("Error converting timeout: ", err.Error())
 		return
 	}
