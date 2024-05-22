@@ -144,6 +144,11 @@ func (r *redisServer) handleCommand(reader *bufio.Reader, writer *bufio.Writer) 
 		return
 	}
 
+	if command.Name == "PSYNC" {
+		r.handlePSYNC(writer, command)
+		return
+	}
+
 	writeError(writer, "ERROR")
 }
 
@@ -240,4 +245,13 @@ func (r *redisServer) handleREPLCONF(writer *bufio.Writer, command *RedisCommand
 	}
 
 	writeError(writer, "ERROR")
+}
+
+func (r *redisServer) handlePSYNC(writer *bufio.Writer, command *RedisCommand) {
+	if len(command.Parameters) != 3 {
+		writeError(writer, "ERROR")
+		return
+	}
+
+	writeSimpleString(writer, fmt.Sprintf("FULLRESYNC %s %d", r.replicationId, r.replicationOffset))
 }

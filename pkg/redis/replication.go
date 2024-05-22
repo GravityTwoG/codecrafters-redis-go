@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 )
 
 func (r *redisServer) handleReplication() {
@@ -22,9 +23,16 @@ func (r *redisServer) handleReplication() {
 		fmt.Println("Error sending PING to master: ", err.Error())
 		return
 	}
+
 	err = r.sendREPLCONFtoMaster(reader, writer)
 	if err != nil {
 		fmt.Println("Error sending REPLCONF to master: ", err.Error())
+		return
+	}
+
+	err = r.sendPSYNCtoMaster(reader, writer)
+	if err != nil {
+		fmt.Println("Error sending PSYNC to master: ", err.Error())
 		return
 	}
 }
@@ -36,7 +44,7 @@ func (r *redisServer) sendPINGtoMaster(reader *bufio.Reader, writer *bufio.Write
 
 	response := parseSimpleString(reader)
 	fmt.Printf("Master response: %s\n", response)
-	if string(response) != "PONG" {
+	if response != "PONG" {
 		return errors.New("master response to PING not equal to PONG")
 	}
 
@@ -52,7 +60,7 @@ func (r *redisServer) sendREPLCONFtoMaster(reader *bufio.Reader, writer *bufio.W
 
 	response := parseSimpleString(reader)
 	fmt.Printf("Master response: %s\n", response)
-	if string(response) != "OK" {
+	if response != "OK" {
 		return errors.New("master response to REPLCONF not equal to OK")
 	}
 
@@ -64,8 +72,24 @@ func (r *redisServer) sendREPLCONFtoMaster(reader *bufio.Reader, writer *bufio.W
 
 	response = parseSimpleString(reader)
 	fmt.Printf("Master response: %s\n", response)
-	if string(response) != "OK" {
+	if response != "OK" {
 		return errors.New("master response to REPLCONF not equal to OK")
+	}
+
+	return nil
+}
+
+func (r *redisServer) sendPSYNCtoMaster(reader *bufio.Reader, writer *bufio.Writer) error {
+	writeArrayLength(writer, 3)
+	writeBulkString(writer, "PSYNC")
+	writeBulkString(writer, "?")
+	writeBulkString(writer, "-1")
+	writer.Flush()
+
+	response := parseSimpleString(reader)
+	fmt.Printf("Master response: %s\n", response)
+	if !strings.Contains(response, "FULLRESYNC") {
+		return errors.New("master response to PSYNC not equal to FULLRESYNC")
 	}
 
 	return nil
