@@ -174,7 +174,7 @@ func (r *redisServer) sendSETtoSlaves(command *RedisCommand) {
 	wg.Wait()
 }
 
-func (r *redisServer) sendGETACKtoSlaves() int {
+func (r *redisServer) sendGETACKtoSlaves(acksChan *chan int) {
 	acks := 0
 	wg := &sync.WaitGroup{}
 
@@ -199,14 +199,14 @@ func (r *redisServer) sendGETACKtoSlaves() int {
 			command := parseCommand(slaveReader)
 			if command.Name == "REPLCONF" && command.Parameters[0] == "ACK" {
 				acks++
+				*acksChan <- acks
 			}
 			currentSlave.pending = false
 			fmt.Printf("Slave returned ACK: %s\n", slaveAddr)
 		}(&r.connectedSlaves[i])
 	}
 	wg.Wait()
-
-	return acks
+	close(*acksChan)
 }
 
 func (r *redisServer) handleSlave(conn net.Conn, reader *bufio.Reader, writer *bufio.Writer) {
@@ -308,26 +308,23 @@ func (r *redisServer) handleWAIT(writer *bufio.Writer, command *RedisCommand) {
 	}
 
 	timeoutChan := time.After(time.Duration(timeoutMs) * time.Millisecond)
-	done := make(chan bool, 1)
+	// acknowledgements channel
+	acksChan := make(chan int, 1)
+	acks := 0
 
-	go func() {
-		acks := r.sendGETACKtoSlaves()
-		if acks >= replicas {
-			done <- true
-		}
-	}()
-
-	go func() {
+	go r.sendGETACKtoSlaves(&acksChan)
+	isDone := false
+	for !isDone {
 		select {
+		case acks = <-acksChan:
+			if acks >= replicas {
+				isDone = true
+			}
 		case <-timeoutChan:
-			done <- true
-			return
-		case <-done:
-			return
+			isDone = true
+			acks = replicas
 		}
-	}()
+	}
 
-	<-done
-
-	writeInteger(writer, fmt.Sprintf("%d", len(r.connectedSlaves)))
+	writeInteger(writer, fmt.Sprintf("%d", acks))
 }
