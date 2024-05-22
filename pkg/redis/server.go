@@ -86,15 +86,30 @@ func (r *redisServer) handleCommand(reader *bufio.Reader, writer *bufio.Writer) 
 
 	if command.Name == "PING" {
 		writeSimpleString(writer, "PONG")
-	} else if command.Name == "ECHO" {
-		writeBulkString(writer, command.Parameters[0])
-	} else if command.Name == "SET" {
-		r.handleSET(writer, command)
-	} else if command.Name == "GET" {
-		r.handleGET(writer, command)
-	} else {
-		writeError(writer, "ERROR")
+		return
 	}
+
+	if command.Name == "ECHO" {
+		writeBulkString(writer, command.Parameters[0])
+		return
+	}
+
+	if command.Name == "SET" {
+		r.handleSET(writer, command)
+		return
+	}
+
+	if command.Name == "GET" {
+		r.handleGET(writer, command)
+		return
+	}
+
+	if command.Name == "INFO" {
+		r.handleINFO(writer, command)
+		return
+	}
+
+	writeError(writer, "ERROR")
 }
 
 func (r *redisServer) handleSET(writer *bufio.Writer, command *RedisCommand) {
@@ -145,4 +160,17 @@ func (r *redisServer) handleGET(writer *bufio.Writer, command *RedisCommand) {
 			fmt.Printf("key: %s, value: %s\n", key, value)
 		}
 	}
+}
+
+func (r *redisServer) handleINFO(writer *bufio.Writer, command *RedisCommand) {
+	if len(command.Parameters) == 1 {
+		key := command.Parameters[0]
+		if strings.ToUpper(key) == "REPLICATION" {
+			role := "master"
+			writeBulkString(writer, fmt.Sprintf(`# Replication\r\nrole:%s\r\nconnected_slaves:0\r\nmaster_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\r\nmaster_repl_offset:0\r\nsecond_repl_offset:-1\r\nrepl_backlog_active:0\r\nrepl_backlog_size:1048576\r\nrepl_backlog_first_byte_offset:0\r\nrepl_backlog_histlen:`, role))
+			return
+		}
+	}
+
+	writeError(writer, "ERROR")
 }
