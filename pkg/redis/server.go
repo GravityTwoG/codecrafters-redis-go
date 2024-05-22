@@ -29,7 +29,11 @@ type redisServer struct {
 	host string
 	port string
 
-	role              string
+	role string
+
+	slavePorts      []string
+	connectedSlaves int
+
 	replicaOf         string
 	replicationId     string
 	replicationOffset int
@@ -50,7 +54,11 @@ func NewRedisServer(host string, port string, replicaOf string) *redisServer {
 		host: host,
 		port: port,
 
-		role:              role,
+		role: role,
+
+		slavePorts:      make([]string, 0),
+		connectedSlaves: 0,
+
 		replicaOf:         replicaOf,
 		replicationId:     replicationId,
 		replicationOffset: 0,
@@ -68,7 +76,7 @@ func (r *redisServer) Start() {
 	defer l.Close()
 
 	if r.role == "slave" {
-		r.sendPINGtoMaster()
+		r.handleReplication()
 	}
 
 	wg := &sync.WaitGroup{}
@@ -87,29 +95,6 @@ func (r *redisServer) Start() {
 	}
 
 	wg.Wait()
-}
-
-func (r *redisServer) sendPINGtoMaster() {
-
-	conn, err := net.Dial("tcp", r.replicaOf)
-	if err != nil {
-		fmt.Println("Error connecting to master: ", err.Error())
-		return
-	}
-
-	reader := bufio.NewReader(conn)
-	writer := bufio.NewWriter(conn)
-
-	writer.Write([]byte{ARRAY_SPECIFIER, '1', '\r', '\n'})
-	writeBulkString(writer, "PING")
-	writer.Flush()
-
-	response := parseSimpleString(reader)
-	fmt.Printf("Master response: %s\n", response)
-	if string(response) != "+PONG" {
-		fmt.Println("Master response to PING not equal to PONG")
-		return
-	}
 }
 
 func (r *redisServer) handleConnection(conn net.Conn) {
@@ -151,6 +136,11 @@ func (r *redisServer) handleCommand(reader *bufio.Reader, writer *bufio.Writer) 
 
 	if command.Name == "INFO" {
 		r.handleINFO(writer, command)
+		return
+	}
+
+	if command.Name == "REPLCONF" {
+		r.handleREPLCONF(writer, command)
 		return
 	}
 
@@ -213,7 +203,7 @@ func (r *redisServer) handleINFO(writer *bufio.Writer, command *RedisCommand) {
 		if strings.ToUpper(key) == "REPLICATION" {
 			response := "# Replication\r\n"
 			response += fmt.Sprintf("role:%s\r\n", r.role)
-			response += fmt.Sprintf("connected_slaves:0\r\n")
+			response += fmt.Sprintf("connected_slaves:%d\r\n", r.connectedSlaves)
 			response += fmt.Sprintf("master_replid:%s\r\n", r.replicationId)
 			response += fmt.Sprintf("master_repl_offset:%d\r\n", r.replicationOffset)
 			response += fmt.Sprintf("second_repl_offset:-1\r\n")
@@ -224,6 +214,29 @@ func (r *redisServer) handleINFO(writer *bufio.Writer, command *RedisCommand) {
 			writeBulkString(writer, response)
 			return
 		}
+	}
+
+	writeError(writer, "ERROR")
+}
+
+func (r *redisServer) handleREPLCONF(writer *bufio.Writer, command *RedisCommand) {
+	if len(command.Parameters) != 2 {
+		writeError(writer, "ERROR")
+		return
+	}
+
+	if strings.ToUpper(command.Parameters[0]) == "listening-port" {
+		slavePort := command.Parameters[1]
+		r.slavePorts = append(r.slavePorts, slavePort)
+		writeSimpleString(writer, "OK")
+		return
+	}
+
+	if strings.ToUpper(command.Parameters[0]) == "CAPA" &&
+		strings.ToUpper(command.Parameters[1]) == "PSYNC2" {
+
+		writeArrayLength(writer, 0)
+		return
 	}
 
 	writeError(writer, "ERROR")

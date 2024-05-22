@@ -30,3 +30,8 @@ func writeError(writer *bufio.Writer, str string) {
 	writer.Write([]byte{ERROR_SPECIFIER})
 	writer.Write([]byte(str + "\r\n"))
 }
+
+func writeArrayLength(writer *bufio.Writer, length int) {
+	writer.Write([]byte{ARRAY_SPECIFIER})
+	writer.Write([]byte(strconv.Itoa(length) + "\r\n"))
+}
