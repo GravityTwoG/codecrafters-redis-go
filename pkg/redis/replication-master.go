@@ -60,7 +60,7 @@ func (r *redisServer) masterSendSET(command *RedisCommand) {
 }
 
 func (r *redisServer) masterSendGETACKtoReplica(
-	replica *Replica, doneChan chan bool,
+	replica *Replica, doneChan *chan bool,
 ) {
 	writer := bufio.NewWriter(replica.conn)
 	reader := bufio.NewReader(replica.conn)
@@ -71,27 +71,27 @@ func (r *redisServer) masterSendGETACKtoReplica(
 	writer.Flush()
 
 	command := parseCommand(reader)
+	fmt.Printf("PARSED\n")
 	if command == nil {
-		doneChan <- false
+		*doneChan <- false
 
 		fmt.Printf("Slave returned nil: %s\n", replicaAddr)
 		return
 	}
 	if command.Name == "REPLCONF" && command.Parameters[0] == "ACK" {
 		replica.pending = false
-		doneChan <- true
+		*doneChan <- true
 
 		fmt.Printf("Slave returned ACK: %s\n", replicaAddr)
 		return
 	}
-	doneChan <- false
+	*doneChan <- false
 	fmt.Printf("Slave returned not ACK: %s\n", replicaAddr)
 }
 
 func (r *redisServer) masterSendGETACK(
 	replicas int, timeout time.Duration,
 ) int {
-	acks := 0
 	acksChan := make(chan int)
 
 	fmt.Printf("Sending GETACK to slaves with timeout: %s\n", timeout.String())
@@ -107,7 +107,7 @@ func (r *redisServer) masterSendGETACK(
 			defer currentReplica.mutex.Unlock()
 
 			doneChan := make(chan bool)
-			go r.masterSendGETACKtoReplica(currentReplica, doneChan)
+			go r.masterSendGETACKtoReplica(currentReplica, &doneChan)
 
 			timeoutTicker := time.NewTicker(timeout)
 			select {
@@ -122,6 +122,7 @@ func (r *redisServer) masterSendGETACK(
 		}(&r.connectedReplicas[i])
 	}
 
+	acks := 0
 	timeoutTicker := time.NewTicker(timeout)
 	for {
 		select {
@@ -199,7 +200,7 @@ func (r *redisServer) masterHandleWAIT(writer *bufio.Writer, command *RedisComma
 		return
 	}
 
-	acks := r.masterSendGETACK(replicas, time.Duration(timeoutMs+20)*time.Millisecond)
+	acks := r.masterSendGETACK(replicas, time.Duration(timeoutMs)*time.Millisecond)
 	writeInteger(writer, fmt.Sprintf("%d", acks))
 	fmt.Printf("Received ACKS: %d\n", acks)
 }
