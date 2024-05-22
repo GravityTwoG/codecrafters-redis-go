@@ -91,8 +91,9 @@ func (r *redisServer) masterSendGETACK(
 	fmt.Printf("Sending GETACK to slaves with timeout: %s\n", timeout.String())
 
 	for i, replica := range r.connectedReplicas {
+		replicaAddr := replica.conn.RemoteAddr().String()
 		if !replica.pending {
-			fmt.Printf("Slave not pending: %s\n", replica.conn.RemoteAddr().String())
+			fmt.Printf("Slave not pending: %s\n", replicaAddr)
 			continue
 		}
 
@@ -100,24 +101,12 @@ func (r *redisServer) masterSendGETACK(
 			currentReplica.mutex.Lock()
 			defer currentReplica.mutex.Unlock()
 
-			replicaAddr := currentReplica.conn.RemoteAddr().String()
-
-			doneChan := make(chan bool)
-			go func() {
-				doneChan <- r.masterSendGETACKtoReplica(currentReplica)
-			}()
-
-			select {
-			case acknowledged := <-doneChan:
-				if acknowledged {
-					acksChan <- 1
-					fmt.Printf("Slave acknowledged GETACK: %s\n", replicaAddr)
-				} else {
-					fmt.Printf("Slave not acknowledged GETACK: %s\n", replicaAddr)
-				}
-
-			case <-time.After(timeout):
-				fmt.Printf("Timeout sending GETACK to slave: %s\n", replicaAddr)
+			acknowledged := r.masterSendGETACKtoReplica(currentReplica)
+			if acknowledged {
+				fmt.Printf("Slave acknowledged GETACK: %s\n", replicaAddr)
+				acksChan <- 1
+			} else {
+				fmt.Printf("Slave not acknowledged GETACK: %s\n", replicaAddr)
 			}
 		}(&r.connectedReplicas[i])
 	}
@@ -132,6 +121,7 @@ func (r *redisServer) masterSendGETACK(
 			}
 
 		case <-time.After(timeout):
+			fmt.Println("Timeout reached")
 			return acks
 		}
 	}
