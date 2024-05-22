@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -11,6 +12,17 @@ import (
 
 	"github.com/codecrafters-io/redis-starter-go/pkg/utils"
 )
+
+type countingReader struct {
+	io.Reader
+	n int
+}
+
+func (w *countingReader) Read(p []byte) (int, error) {
+	n, err := w.Reader.Read(p)
+	w.n += n
+	return n, err
+}
 
 func (r *redisServer) setupReplication() {
 	// Connect to master
@@ -20,7 +32,11 @@ func (r *redisServer) setupReplication() {
 		return
 	}
 
-	reader := bufio.NewReader(conn)
+	countingReader := &countingReader{
+		Reader: conn,
+		n:      0,
+	}
+	reader := bufio.NewReader(countingReader)
 	writer := bufio.NewWriter(conn)
 
 	err = r.sendPINGtoMaster(reader, writer)
@@ -52,6 +68,7 @@ func (r *redisServer) setupReplication() {
 
 	// Handle commands from master
 	for {
+		countingReader.n = 0
 		command := parseCommand(reader)
 		if command == nil {
 			break
@@ -64,6 +81,7 @@ func (r *redisServer) setupReplication() {
 		}
 
 		writer.Flush()
+		r.slaveReplicationOffset += countingReader.n
 	}
 }
 
@@ -215,7 +233,7 @@ func (r *redisServer) handleREPLCONFfromMaster(writer *bufio.Writer, command *Re
 
 	if strings.ToUpper((command.Parameters[0])) == "GETACK" &&
 		command.Parameters[1] == "*" {
-		writeBulkStringArray(writer, []string{"REPLCONF", "ACK", "0"})
+		writeBulkStringArray(writer, []string{"REPLCONF", "ACK", fmt.Sprintf("%d", r.slaveReplicationOffset)})
 		return
 	}
 

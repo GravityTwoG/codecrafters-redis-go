@@ -34,9 +34,10 @@ type redisServer struct {
 	slavePorts      []string
 	connectedSlaves []net.Conn
 
-	replicaOf         string
-	replicationId     string
-	replicationOffset int
+	replicaOf              string
+	replicationId          string
+	replicationOffset      int
+	slaveReplicationOffset int
 
 	store *redisstore.RedisStore
 }
@@ -59,9 +60,10 @@ func NewRedisServer(host string, port string, replicaOf string) *redisServer {
 		slavePorts:      make([]string, 0),
 		connectedSlaves: make([]net.Conn, 0),
 
-		replicaOf:         replicaOf,
-		replicationId:     replicationId,
-		replicationOffset: 0,
+		replicaOf:              replicaOf,
+		replicationId:          replicationId,
+		replicationOffset:      0,
+		slaveReplicationOffset: 0,
 
 		store: redisstore.NewRedisStore(),
 	}
