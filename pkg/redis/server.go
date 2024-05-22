@@ -165,6 +165,11 @@ func (r *redisServer) handleCommand(conn net.Conn, reader *bufio.Reader, writer 
 		return
 	}
 
+	if command.Name == "WAIT" {
+		r.handleWAIT(writer, command)
+		return
+	}
+
 	writeError(writer, "ERROR")
 }
 
@@ -240,4 +245,13 @@ func (r *redisServer) handleINFO(writer *bufio.Writer, command *RedisCommand) {
 	}
 
 	writeError(writer, "ERROR")
+}
+
+func (r *redisServer) handleWAIT(writer *bufio.Writer, command *RedisCommand) {
+	if len(command.Parameters) != 2 {
+		writeError(writer, "ERROR")
+		return
+	}
+
+	writeInteger(writer, fmt.Sprintf("%d", len(r.connectedSlaves)))
 }
