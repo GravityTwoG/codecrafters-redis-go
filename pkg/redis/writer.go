@@ -25,6 +25,13 @@ func writeNullBulkString(writer *bufio.Writer) {
 	writer.Write([]byte("-1\r\n"))
 }
 
+func writeBulkStringArray(writer *bufio.Writer, strs []string) {
+	writeArrayLength(writer, len(strs))
+	for _, str := range strs {
+		writeBulkString(writer, str)
+	}
+}
+
 func writeInteger(writer *bufio.Writer, str string) {
 	writer.Write([]byte{INTEGER_SPECIFIER})
 	writer.Write([]byte(str + "\r\n"))

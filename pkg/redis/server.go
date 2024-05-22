@@ -32,7 +32,7 @@ type redisServer struct {
 	role string
 
 	slavePorts      []string
-	connectedSlaves int
+	connectedSlaves []net.Conn
 
 	replicaOf         string
 	replicationId     string
@@ -57,7 +57,7 @@ func NewRedisServer(host string, port string, replicaOf string) *redisServer {
 		role: role,
 
 		slavePorts:      make([]string, 0),
-		connectedSlaves: 0,
+		connectedSlaves: make([]net.Conn, 0),
 
 		replicaOf:         replicaOf,
 		replicationId:     replicationId,
@@ -76,7 +76,7 @@ func (r *redisServer) Start() {
 	defer l.Close()
 
 	if r.role == "slave" {
-		r.handleReplication()
+		r.setupReplication()
 	}
 
 	wg := &sync.WaitGroup{}
@@ -103,12 +103,12 @@ func (r *redisServer) handleConnection(conn net.Conn) {
 	writer := bufio.NewWriter(conn)
 
 	for {
-		r.handleCommand(reader, writer)
+		r.handleCommand(conn, reader, writer)
 		writer.Flush()
 	}
 }
 
-func (r *redisServer) handleCommand(reader *bufio.Reader, writer *bufio.Writer) {
+func (r *redisServer) handleCommand(conn net.Conn, reader *bufio.Reader, writer *bufio.Writer) {
 	command := parseCommand(reader)
 	if command == nil {
 		return
@@ -146,6 +146,7 @@ func (r *redisServer) handleCommand(reader *bufio.Reader, writer *bufio.Writer) 
 
 	if command.Name == "PSYNC" {
 		r.handlePSYNC(writer, command)
+		r.handleSlave(conn, reader, writer)
 		return
 	}
 
@@ -179,6 +180,8 @@ func (r *redisServer) handleSET(writer *bufio.Writer, command *RedisCommand) {
 		writeSimpleString(writer, "OK")
 		fmt.Printf("key: %s, value: %s, duration: %s\n", key, value, duration)
 	}
+
+	r.sendSETtoSlaves(command)
 }
 
 func (r *redisServer) handleGET(writer *bufio.Writer, command *RedisCommand) {
@@ -208,7 +211,7 @@ func (r *redisServer) handleINFO(writer *bufio.Writer, command *RedisCommand) {
 		if strings.ToUpper(key) == "REPLICATION" {
 			response := "# Replication\r\n"
 			response += fmt.Sprintf("role:%s\r\n", r.role)
-			response += fmt.Sprintf("connected_slaves:%d\r\n", r.connectedSlaves)
+			response += fmt.Sprintf("connected_slaves:%d\r\n", len(r.connectedSlaves))
 			response += fmt.Sprintf("master_replid:%s\r\n", r.replicationId)
 			response += fmt.Sprintf("master_repl_offset:%d\r\n", r.replicationOffset)
 			response += fmt.Sprintf("second_repl_offset:-1\r\n")
