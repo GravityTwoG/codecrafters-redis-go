@@ -75,11 +75,15 @@ func (r *redisServer) Start() {
 	}
 	defer l.Close()
 
+	wg := &sync.WaitGroup{}
 	if r.role == "slave" {
-		r.setupReplication()
+		wg.Add(1)
+		go func() {
+			r.setupReplication()
+			defer wg.Done()
+		}()
 	}
 
-	wg := &sync.WaitGroup{}
 	for {
 		conn, err := l.Accept()
 		if err != nil {

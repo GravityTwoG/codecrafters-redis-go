@@ -59,7 +59,6 @@ func (r *redisServer) setupReplication() {
 		r.handleSETfromMaster(writer, command)
 		writer.Flush()
 	}
-
 }
 
 func (r *redisServer) sendPINGtoMaster(reader *bufio.Reader, writer *bufio.Writer) error {
