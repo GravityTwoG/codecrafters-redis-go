@@ -28,14 +28,25 @@ type redisServer struct {
 	host string
 	port string
 
+	replicaOf string
+	role      string
+
 	store *redisstore.RedisStore
 }
 
-func NewRedisServer(host string, port string) *redisServer {
+func NewRedisServer(host string, port string, replicaOf string) *redisServer {
+
+	var role = "master"
+	if replicaOf != "" {
+		role = "slave"
+	}
 
 	return &redisServer{
 		host: host,
 		port: port,
+
+		replicaOf: replicaOf,
+		role:      role,
 
 		store: redisstore.NewRedisStore(),
 	}
@@ -166,8 +177,7 @@ func (r *redisServer) handleINFO(writer *bufio.Writer, command *RedisCommand) {
 	if len(command.Parameters) == 1 {
 		key := command.Parameters[0]
 		if strings.ToUpper(key) == "REPLICATION" {
-			role := "master"
-			writeBulkString(writer, fmt.Sprintf(`# Replication\r\nrole:%s\r\nconnected_slaves:0\r\nmaster_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\r\nmaster_repl_offset:0\r\nsecond_repl_offset:-1\r\nrepl_backlog_active:0\r\nrepl_backlog_size:1048576\r\nrepl_backlog_first_byte_offset:0\r\nrepl_backlog_histlen:`, role))
+			writeBulkString(writer, fmt.Sprintf(`# Replication\r\nrole:%s\r\nconnected_slaves:0\r\nmaster_replid:8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb\r\nmaster_repl_offset:0\r\nsecond_repl_offset:-1\r\nrepl_backlog_active:0\r\nrepl_backlog_size:1048576\r\nrepl_backlog_first_byte_offset:0\r\nrepl_backlog_histlen:`, r.role))
 			return
 		}
 	}
