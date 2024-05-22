@@ -51,7 +51,11 @@ func (s *RedisStore) Get(key string) (string, bool, error) {
 	value, ok := s.store[key]
 
 	if !ok {
-		return "", false, errors.New("EXPIRED")
+		return "", false, errors.New("NOT_FOUND")
+	}
+
+	if value.ExpiresAt != nil && time.Now().After(*value.ExpiresAt) {
+		return "", ok, errors.New("EXPIRED")
 	}
 
 	return value.Value, ok, nil
