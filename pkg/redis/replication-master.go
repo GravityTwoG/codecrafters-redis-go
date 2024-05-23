@@ -117,6 +117,7 @@ func (r *redisServer) masterSendGETACK(
 			replicaAddr := currentReplica.conn.RemoteAddr().String()
 			if !currentReplica.pending {
 				fmt.Printf("Slave not pending: %s\n", replicaAddr)
+				acksChan <- struct{}{}
 				return
 			}
 
@@ -137,6 +138,7 @@ func (r *redisServer) masterSendGETACK(
 
 	go func() {
 		wg.Wait()
+		doneChan <- struct{}{}
 		close(doneChan)
 		close(acksChan)
 	}()
@@ -149,6 +151,7 @@ func (r *redisServer) masterSendGETACK(
 			if acks == replicas {
 				return acks
 			}
+
 		case <-doneChan:
 			fmt.Println("All acknowledges sent")
 			return acks
