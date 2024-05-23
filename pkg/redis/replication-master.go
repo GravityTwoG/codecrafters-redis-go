@@ -134,12 +134,8 @@ func (r *redisServer) masterSendGETACK(
 	}
 	r.mutex.Unlock()
 
-	doneChan := make(chan struct{})
-
 	go func() {
 		wg.Wait()
-		doneChan <- struct{}{}
-		close(doneChan)
 		close(acksChan)
 	}()
 
@@ -152,8 +148,8 @@ func (r *redisServer) masterSendGETACK(
 				return acks
 			}
 
-		case <-doneChan:
-			fmt.Println("All acknowledges sent")
+		case <-time.After(timeout):
+			fmt.Println("Timeout!")
 			return acks
 		}
 	}
