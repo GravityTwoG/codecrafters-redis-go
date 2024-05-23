@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	protocol "github.com/codecrafters-io/redis-starter-go/pkg/redis/protocol"
 )
 
 type countingReader struct {
@@ -58,7 +60,7 @@ func (r *redisServer) slaveSetupReplication() {
 	fmt.Printf("SLAVE: Waiting for RDB FILE from master...\n")
 
 	// Get get RDB FILE from master
-	rdbFileLen := parseBulkStringLen(reader)
+	rdbFileLen := protocol.ParseBulkStringLen(reader)
 	fmt.Printf("SLAVE: RDB FILE length: %d\n", rdbFileLen)
 	reader.Discard(rdbFileLen)
 
@@ -69,16 +71,16 @@ func (r *redisServer) slaveSetupReplication() {
 	countingReader.n = 0
 	// Handle commands from master
 	for {
-		command := parseCommand(reader)
+		command := protocol.ParseCommand(reader)
 		if command == nil {
 			break
 		}
 
-		if command.Name == "SET" {
+		if command.Name == protocol.SET {
 			r.slaveHandleSET(command)
-		} else if command.Name == "REPLCONF" {
+		} else if command.Name == protocol.REPLCONF {
 			r.slaveHandleGETACK(writer, command)
-		} else if command.Name == "PING" {
+		} else if command.Name == protocol.PING {
 			fmt.Printf("SLAVE: PING from master\n")
 		}
 
@@ -90,11 +92,10 @@ func (r *redisServer) slaveSetupReplication() {
 }
 
 func (r *redisServer) slaveSendPING(reader *bufio.Reader, writer *bufio.Writer) error {
-	writeArrayLength(writer, 1)
-	writeBulkString(writer, "PING")
+	protocol.WriteBulkStringArray(writer, []string{protocol.PING})
 	writer.Flush()
 
-	response := parseSimpleString(reader)
+	response := protocol.ParseSimpleString(reader)
 	fmt.Printf("Master response: %s\n", response)
 	if response != "PONG" {
 		return errors.New("master response to PING not equal to PONG")
@@ -104,19 +105,23 @@ func (r *redisServer) slaveSendPING(reader *bufio.Reader, writer *bufio.Writer) 
 }
 
 func (r *redisServer) slaveSendREPLCONF(reader *bufio.Reader, writer *bufio.Writer) error {
-	writeBulkStringArray(writer, []string{"REPLCONF", "listening-port", r.port})
+	protocol.WriteBulkStringArray(writer, []string{
+		protocol.REPLCONF, "listening-port", r.port,
+	})
 	writer.Flush()
 
-	response := parseSimpleString(reader)
+	response := protocol.ParseSimpleString(reader)
 	fmt.Printf("Master response: %s\n", response)
 	if response != "OK" {
 		return errors.New("master response to REPLCONF not equal to OK")
 	}
 
-	writeBulkStringArray(writer, []string{"REPLCONF", "capa", "psync2"})
+	protocol.WriteBulkStringArray(writer, []string{
+		protocol.REPLCONF, "capa", "psync2",
+	})
 	writer.Flush()
 
-	response = parseSimpleString(reader)
+	response = protocol.ParseSimpleString(reader)
 	fmt.Printf("Master response: %s\n", response)
 	if response != "OK" {
 		return errors.New("master response to REPLCONF not equal to OK")
@@ -126,10 +131,10 @@ func (r *redisServer) slaveSendREPLCONF(reader *bufio.Reader, writer *bufio.Writ
 }
 
 func (r *redisServer) slaveSendPSYNC(reader *bufio.Reader, writer *bufio.Writer) error {
-	writeBulkStringArray(writer, []string{"PSYNC", "?", "-1"})
+	protocol.WriteBulkStringArray(writer, []string{protocol.PSYNC, "?", "-1"})
 	writer.Flush()
 
-	response := parseSimpleString(reader)
+	response := protocol.ParseSimpleString(reader)
 	fmt.Printf("Master response: %s\n", response)
 	if !strings.Contains(response, "FULLRESYNC") {
 		return errors.New("master response to PSYNC not equal to FULLRESYNC")
@@ -138,13 +143,12 @@ func (r *redisServer) slaveSendPSYNC(reader *bufio.Reader, writer *bufio.Writer)
 	return nil
 }
 
-func (r *redisServer) slaveHandleSET(command *RedisCommand) {
+func (r *redisServer) slaveHandleSET(command *protocol.RedisCommand) {
 	// SET foo bar
 	if len(command.Parameters) == 2 {
 		key := command.Parameters[0]
 		value := command.Parameters[1]
 		r.store.Set(key, value)
-		fmt.Printf("SLAVE: key: %s, value: %s\n", key, value)
 
 		// SET foo bar PX 10000
 	} else if len(command.Parameters) == 4 &&
@@ -160,21 +164,22 @@ func (r *redisServer) slaveHandleSET(command *RedisCommand) {
 
 		duration := time.Duration(durationMs) * time.Millisecond
 		r.store.SetWithTTL(key, value, duration)
-		fmt.Printf("SLAVE: key: %s, value: %s, duration: %s\n", key, value, duration)
 	}
 }
 
-func (r *redisServer) slaveHandleGETACK(writer *bufio.Writer, command *RedisCommand) {
+func (r *redisServer) slaveHandleGETACK(writer *bufio.Writer, command *protocol.RedisCommand) {
 	if len(command.Parameters) != 2 {
-		writeError(writer, "ERROR: REPLCONF. Invalid number of parameters")
+		protocol.WriteError(writer, "ERROR: REPLCONF. Invalid number of parameters")
 		return
 	}
 
 	if strings.ToUpper(command.Parameters[0]) == "GETACK" &&
 		command.Parameters[1] == "*" {
-		writeBulkStringArray(writer, []string{"REPLCONF", "ACK", fmt.Sprintf("%d", r.slaveReplicationOffset)})
+		protocol.WriteBulkStringArray(writer, []string{
+			protocol.REPLCONF, "ACK", fmt.Sprintf("%d", r.slaveReplicationOffset),
+		})
 		return
 	}
 
-	writeError(writer, "ERROR: REPLCONF. Invalid parameters")
+	protocol.WriteError(writer, "ERROR: REPLCONF. Invalid parameters")
 }

@@ -10,15 +10,10 @@ import (
 	"sync"
 	"time"
 
+	protocol "github.com/codecrafters-io/redis-starter-go/pkg/redis/protocol"
 	redisstore "github.com/codecrafters-io/redis-starter-go/pkg/redis/store"
 	"github.com/codecrafters-io/redis-starter-go/pkg/utils"
 )
-
-const SIMPLE_STRING_SPECIFIER = '+'
-const ERROR_SPECIFIER = '-'
-const INTEGER_SPECIFIER = ':'
-const BULK_STRING_SPECIFIER = '$'
-const ARRAY_SPECIFIER = '*'
 
 type Replica struct {
 	conn    net.Conn
@@ -117,12 +112,12 @@ func (r *redisServer) handleConnection(conn net.Conn) {
 	writer := bufio.NewWriter(conn)
 
 	for {
-		command := parseCommand(reader)
+		command := protocol.ParseCommand(reader)
 		if command == nil {
 			return
 		}
 
-		if command.Name == "PSYNC" {
+		if command.Name == protocol.PSYNC {
 			slaveConnection = true
 			r.masterHandlePSYNC(writer, command)
 			r.masterHandleSlave(conn, reader)
@@ -134,118 +129,120 @@ func (r *redisServer) handleConnection(conn net.Conn) {
 	}
 }
 
-func (r *redisServer) handleCommand(writer *bufio.Writer, command *RedisCommand) {
-	if command.Name == "PING" {
-		writeSimpleString(writer, "PONG")
-		return
-	}
+func (r *redisServer) handleCommand(writer *bufio.Writer, command *protocol.RedisCommand) {
+	switch command.Name {
+	case protocol.PING:
+		protocol.WriteSimpleString(writer, "PONG")
 
-	if command.Name == "ECHO" {
-		writeBulkString(writer, command.Parameters[0])
-		return
-	}
+	case protocol.ECHO:
+		protocol.WriteBulkString(writer, command.Parameters[0])
 
-	if command.Name == "SET" {
+	case protocol.SET:
 		r.handleSET(writer, command)
-		return
-	}
 
-	if command.Name == "GET" {
+	case protocol.GET:
 		r.handleGET(writer, command)
-		return
-	}
 
-	if command.Name == "INFO" {
+	case protocol.INFO:
 		r.handleINFO(writer, command)
-		return
-	}
 
-	if command.Name == "REPLCONF" {
+	case protocol.REPLCONF:
 		r.masterHandleREPLCONF(writer, command)
-		return
-	}
 
-	if command.Name == "WAIT" {
+	case protocol.WAIT:
 		r.masterHandleWAIT(writer, command)
-		return
-	}
 
-	writeError(writer, "ERROR: Unknown command")
+	default:
+		protocol.WriteError(writer, "ERROR: Unknown command")
+	}
 }
 
-func (r *redisServer) handleSET(writer *bufio.Writer, command *RedisCommand) {
+func (r *redisServer) handleSET(writer *bufio.Writer, command *protocol.RedisCommand) {
+	go r.masterSendSET(command)
 
 	// SET foo bar
 	if len(command.Parameters) == 2 {
 		key := command.Parameters[0]
 		value := command.Parameters[1]
 		r.store.Set(key, value)
-		writeSimpleString(writer, "OK")
+		protocol.WriteSimpleString(writer, "OK")
 		fmt.Printf("key: %s, value: %s\n", key, value)
+		return
+	}
 
-		// SET foo bar PX 10000
-	} else if len(command.Parameters) == 4 &&
+	// SET foo bar PX 10000
+	if len(command.Parameters) == 4 &&
 		strings.ToUpper(command.Parameters[2]) == "PX" {
 
 		key := command.Parameters[0]
 		value := command.Parameters[1]
 		durationMs, err := strconv.Atoi(command.Parameters[3])
 		if err != nil {
-			writeError(writer, "ERROR: Invalid duration")
+			protocol.WriteError(writer, "ERROR: Invalid duration")
 			return
 		}
 
 		duration := time.Duration(durationMs) * time.Millisecond
 		r.store.SetWithTTL(key, value, duration)
-		writeSimpleString(writer, "OK")
+		protocol.WriteSimpleString(writer, "OK")
 		fmt.Printf("key: %s, value: %s, duration: %s\n", key, value, duration)
+		return
 	}
 
-	go r.masterSendSET(command)
+	protocol.WriteError(writer, "ERROR: SET: Wrong number of arguments")
 }
 
-func (r *redisServer) handleGET(writer *bufio.Writer, command *RedisCommand) {
-	if len(command.Parameters) == 1 {
-		key := command.Parameters[0]
-		value, ok, err := r.store.Get(key)
-		if !ok {
-			writeError(writer, "ERROR: Key not found")
-			fmt.Printf("key: %s not found\n", key)
-		} else if err != nil {
-			if err.Error() == "EXPIRED" {
-				writeNullBulkString(writer)
-				fmt.Printf("key: %s expired\n", key)
-			} else {
-				writeError(writer, err.Error())
-			}
+func (r *redisServer) handleGET(writer *bufio.Writer, command *protocol.RedisCommand) {
+	if len(command.Parameters) != 1 {
+		protocol.WriteError(writer, "ERROR: Wrong number of arguments")
+		fmt.Println("ERROR: GET: Wrong number of arguments")
+		return
+	}
+
+	key := command.Parameters[0]
+	value, ok, err := r.store.Get(key)
+	if err != nil {
+		if err.Error() == "EXPIRED" {
+			protocol.WriteNullBulkString(writer)
 		} else {
-			writeBulkString(writer, value)
-			fmt.Printf("key: %s, value: %s\n", key, value)
+			protocol.WriteError(writer, err.Error())
 		}
+		return
 	}
+
+	if !ok {
+		protocol.WriteError(writer, "ERROR: Key not found")
+		return
+	}
+
+	protocol.WriteBulkString(writer, value)
 }
 
-func (r *redisServer) handleINFO(writer *bufio.Writer, command *RedisCommand) {
-	if len(command.Parameters) == 1 {
-		r.mutex.Lock()
-		defer r.mutex.Unlock()
-
-		key := command.Parameters[0]
-		if strings.ToUpper(key) == "REPLICATION" {
-			response := "# Replication\r\n"
-			response += fmt.Sprintf("role:%s\r\n", r.role)
-			response += fmt.Sprintf("connected_slaves:%d\r\n", len(r.connectedReplicas))
-			response += fmt.Sprintf("master_replid:%s\r\n", r.replicationId)
-			response += fmt.Sprintf("master_repl_offset:%d\r\n", r.replicationOffset)
-			response += fmt.Sprintf("second_repl_offset:%d\r\n", -1)
-			response += fmt.Sprintf("repl_backlog_active:%d\r\n", 0)
-			response += fmt.Sprintf("repl_backlog_size:%d\r\n", 1048576)
-			response += fmt.Sprintf("repl_backlog_first_byte_offset:%d\r\n", 0)
-			response += fmt.Sprintf("repl_backlog_histlen:%d", 0)
-			writeBulkString(writer, response)
-			return
-		}
+func (r *redisServer) handleINFO(writer *bufio.Writer, command *protocol.RedisCommand) {
+	if len(command.Parameters) != 1 {
+		protocol.WriteError(writer, "ERROR: INFO. Invalid number of parameters")
+		return
 	}
 
-	writeError(writer, "ERROR: INFO. Invalid number of parameters")
+	key := command.Parameters[0]
+	if strings.ToUpper(key) != "REPLICATION" {
+		protocol.WriteError(writer, "ERROR: INFO. Invalid parameters")
+		return
+	}
+
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	response := "# Replication\r\n"
+	response += fmt.Sprintf("role:%s\r\n", r.role)
+	response += fmt.Sprintf("connected_slaves:%d\r\n", len(r.connectedReplicas))
+	response += fmt.Sprintf("master_replid:%s\r\n", r.replicationId)
+	response += fmt.Sprintf("master_repl_offset:%d\r\n", r.replicationOffset)
+	response += fmt.Sprintf("second_repl_offset:%d\r\n", -1)
+	response += fmt.Sprintf("repl_backlog_active:%d\r\n", 0)
+	response += fmt.Sprintf("repl_backlog_size:%d\r\n", 1048576)
+	response += fmt.Sprintf("repl_backlog_first_byte_offset:%d\r\n", 0)
+	response += fmt.Sprintf("repl_backlog_histlen:%d", 0)
+
+	protocol.WriteBulkString(writer, response)
 }

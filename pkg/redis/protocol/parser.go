@@ -1,4 +1,4 @@
-package redis
+package redis_protocol
 
 import (
 	"bufio"
@@ -6,14 +6,11 @@ import (
 	"strconv"
 )
 
-type RedisCommand struct {
-	Name       string
-	Parameters []string
-}
-
-func (c *RedisCommand) ToStringArray() []string {
-	return append([]string{c.Name}, c.Parameters...)
-}
+const SIMPLE_STRING_SPECIFIER = '+'
+const ERROR_SPECIFIER = '-'
+const INTEGER_SPECIFIER = ':'
+const BULK_STRING_SPECIFIER = '$'
+const ARRAY_SPECIFIER = '*'
 
 func parseParametersCount(reader *bufio.Reader) int {
 	firstByte, err := reader.ReadByte()
@@ -38,7 +35,7 @@ func parseParametersCount(reader *bufio.Reader) int {
 	return count
 }
 
-func parseBulkStringLen(reader *bufio.Reader) int {
+func ParseBulkStringLen(reader *bufio.Reader) int {
 	firstByte, err := reader.ReadByte()
 	if err != nil || firstByte != BULK_STRING_SPECIFIER {
 		fmt.Println("parseBulkStringLen: Error reading byte: ", err.Error())
@@ -61,7 +58,7 @@ func parseBulkStringLen(reader *bufio.Reader) int {
 }
 
 func parseBulkString(reader *bufio.Reader) string {
-	bulkStringLen := parseBulkStringLen(reader)
+	bulkStringLen := ParseBulkStringLen(reader)
 	if bulkStringLen == -1 {
 		return ""
 	}
@@ -81,7 +78,7 @@ func parseBulkString(reader *bufio.Reader) string {
 	return str
 }
 
-func parseSimpleString(reader *bufio.Reader) string {
+func ParseSimpleString(reader *bufio.Reader) string {
 	firstByte, err := reader.ReadByte()
 	if err != nil || firstByte != SIMPLE_STRING_SPECIFIER {
 		fmt.Println("parseSimpleString: Error reading byte: ", err.Error())
@@ -100,7 +97,7 @@ func parseSimpleString(reader *bufio.Reader) string {
 	return str
 }
 
-func parseCommand(reader *bufio.Reader) *RedisCommand {
+func ParseCommand(reader *bufio.Reader) *RedisCommand {
 	parametersCount := parseParametersCount(reader)
 	if parametersCount == -1 {
 		return nil

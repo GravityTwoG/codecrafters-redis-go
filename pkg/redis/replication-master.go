@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	protocol "github.com/codecrafters-io/redis-starter-go/pkg/redis/protocol"
 	"github.com/codecrafters-io/redis-starter-go/pkg/utils"
 )
 
@@ -30,12 +31,12 @@ func (r *redisServer) masterSendRDBFile(writer *bufio.Writer) {
 		return
 	}
 
-	writeBulkStringSpecifier(writer, len(content))
+	protocol.WriteBulkStringSpecifier(writer, len(content))
 	writer.Write(content)
 	writer.Flush()
 }
 
-func (r *redisServer) masterSendSET(command *RedisCommand) {
+func (r *redisServer) masterSendSET(command *protocol.RedisCommand) {
 	wg := &sync.WaitGroup{}
 
 	r.mutex.Lock()
@@ -50,7 +51,7 @@ func (r *redisServer) masterSendSET(command *RedisCommand) {
 
 			writer := bufio.NewWriter(currentReplica.conn)
 
-			writeBulkStringArray(writer, command.ToStringArray())
+			protocol.WriteBulkStringArray(writer, command.ToStringArray())
 			writer.Flush()
 			currentReplica.pending = true
 			fmt.Printf("Sent SET to slave: %s\n", replicaAddr)
@@ -68,14 +69,16 @@ func (r *redisServer) masterSendGETACKtoReplica(
 	writer := bufio.NewWriter(replica.conn)
 	reader := bufio.NewReader(replica.conn)
 
-	writeBulkStringArray(writer, []string{"REPLCONF", "GETACK", "*"})
+	protocol.WriteBulkStringArray(writer, []string{
+		protocol.REPLCONF, "GETACK", "*",
+	})
 	writer.Flush()
 
 	replica.conn.SetReadDeadline(time.Now().Add(timeout))
 
-	command := parseCommand(reader)
+	command := protocol.ParseCommand(reader)
 	if command != nil &&
-		command.Name == "REPLCONF" &&
+		command.Name == protocol.REPLCONF &&
 		command.Parameters[0] == "ACK" {
 
 		replica.pending = false
@@ -149,62 +152,66 @@ func (r *redisServer) masterSendGETACK(
 	}
 }
 
-func (r *redisServer) masterHandleREPLCONF(writer *bufio.Writer, command *RedisCommand) {
+func (r *redisServer) masterHandleREPLCONF(
+	writer *bufio.Writer, command *protocol.RedisCommand,
+) {
 	if len(command.Parameters) != 2 {
-		writeError(writer, "ERROR: REPLCONF. Invalid number of parameters")
+		protocol.WriteError(writer, "ERROR: REPLCONF. Invalid number of parameters")
 		return
 	}
 
 	if strings.ToUpper(command.Parameters[0]) == "LISTENING-PORT" {
 		slavePort := command.Parameters[1]
 		r.slavePorts = append(r.slavePorts, slavePort)
-		writeSimpleString(writer, "OK")
+		protocol.WriteSimpleString(writer, "OK")
 		return
 	}
 
 	if strings.ToUpper(command.Parameters[0]) == "CAPA" &&
 		strings.ToUpper(command.Parameters[1]) == "PSYNC2" {
 
-		writeSimpleString(writer, "OK")
+		protocol.WriteSimpleString(writer, "OK")
 		return
 	}
 
-	writeError(writer, "ERROR: REPLCONF. Invalid parameters")
+	protocol.WriteError(writer, "ERROR: REPLCONF. Invalid parameters")
 }
 
-func (r *redisServer) masterHandlePSYNC(writer *bufio.Writer, command *RedisCommand) {
+func (r *redisServer) masterHandlePSYNC(
+	writer *bufio.Writer, command *protocol.RedisCommand,
+) {
 	if len(command.Parameters) != 2 {
-		writeError(writer, "ERROR: PSYNC. Invalid number of parameters")
+		protocol.WriteError(writer, "ERROR: PSYNC. Invalid number of parameters")
 		return
 	}
 
-	writeSimpleString(writer, fmt.Sprintf("FULLRESYNC %s %d", r.replicationId, r.replicationOffset))
+	protocol.WriteSimpleString(writer, fmt.Sprintf("FULLRESYNC %s %d", r.replicationId, r.replicationOffset))
 
 	r.masterSendRDBFile(writer)
 }
 
-func (r *redisServer) masterHandleWAIT(writer *bufio.Writer, command *RedisCommand) {
+func (r *redisServer) masterHandleWAIT(writer *bufio.Writer, command *protocol.RedisCommand) {
 	if len(command.Parameters) != 2 {
-		writeError(writer, "ERROR: WAIT. Invalid number of parameters")
+		protocol.WriteError(writer, "ERROR: WAIT. Invalid number of parameters")
 		fmt.Printf("Error in command WAIT: invalid len %d\n", len(command.Parameters))
 		return
 	}
 
 	replicas, err := strconv.Atoi(command.Parameters[0])
 	if err != nil {
-		writeError(writer, "ERROR: WAIT. Invalid number of replicas")
+		protocol.WriteError(writer, "ERROR: WAIT. Invalid number of replicas")
 		fmt.Println("Error converting replicas: ", err.Error())
 		return
 	}
 	timeoutMs, err := strconv.Atoi(command.Parameters[1])
 	if err != nil {
-		writeError(writer, "ERROR: WAIT. Invalid timeout")
+		protocol.WriteError(writer, "ERROR: WAIT. Invalid timeout")
 		fmt.Println("Error converting timeout: ", err.Error())
 		return
 	}
 
 	timeout := time.Duration(timeoutMs) * time.Millisecond
 	acks := r.masterSendGETACK(replicas, timeout)
-	writeInteger(writer, fmt.Sprintf("%d", acks))
+	protocol.WriteInteger(writer, fmt.Sprintf("%d", acks))
 	fmt.Printf("Received ACKS: %d\n", acks)
 }

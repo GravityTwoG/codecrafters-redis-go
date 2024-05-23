@@ -2,6 +2,7 @@ package redisstore
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -24,6 +25,7 @@ func NewRedisStore() *RedisStore {
 }
 
 func (s *RedisStore) Set(key string, value string) {
+	fmt.Printf("SET key: %s, value: %s\n", key, value)
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -33,7 +35,13 @@ func (s *RedisStore) Set(key string, value string) {
 	}
 }
 
-func (s *RedisStore) SetWithTTL(key string, value string, duration time.Duration) {
+func (s *RedisStore) SetWithTTL(
+	key string, value string, duration time.Duration,
+) {
+	fmt.Printf(
+		"SET key: %s, value: %s, duration: %s\n",
+		key, value, duration.String(),
+	)
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
@@ -45,18 +53,22 @@ func (s *RedisStore) SetWithTTL(key string, value string, duration time.Duration
 }
 
 func (s *RedisStore) Get(key string) (string, bool, error) {
+	fmt.Printf("GET key: %s\n", key)
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
 	value, ok := s.store[key]
 
 	if !ok {
+		fmt.Printf("GET key: %s NOT_FOUND\n", key)
 		return "", false, errors.New("NOT_FOUND")
 	}
 
 	if value.ExpiresAt != nil && time.Now().After(*value.ExpiresAt) {
-		return "", ok, errors.New("EXPIRED")
+		fmt.Printf("GET key: %s EXPIRED\n", key)
+		return "", false, errors.New("EXPIRED")
 	}
 
+	fmt.Printf("GET key: %s, value: %s\n", key, value.Value)
 	return value.Value, ok, nil
 }
