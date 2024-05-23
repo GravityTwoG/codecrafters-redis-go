@@ -14,7 +14,7 @@ func (r *redisServer) slaveSetupReplication() {
 	// Connect to master
 	conn, err := net.Dial("tcp", r.replicaOf)
 	if err != nil {
-		fmt.Println("Error connecting to master: ", err.Error())
+		fmt.Println("SLAVE: Error connecting to master: ", err.Error())
 		return
 	}
 
@@ -27,34 +27,35 @@ func (r *redisServer) slaveSetupReplication() {
 
 	err = r.slaveSendPING(reader, writer)
 	if err != nil {
-		fmt.Println("Error sending PING to master: ", err.Error())
+		fmt.Println("SLAVE: Error sending PING to master: ", err.Error())
 		return
 	}
 
 	err = r.slaveSendREPLCONF(reader, writer)
 	if err != nil {
-		fmt.Println("Error sending REPLCONF to master: ", err.Error())
+		fmt.Println("SLAVE: Error sending REPLCONF to master: ", err.Error())
 		return
 	}
 
 	err = r.slaveSendPSYNC(reader, writer)
 	if err != nil {
-		fmt.Println("Error sending PSYNC to master: ", err.Error())
+		fmt.Println("SLAVE: Error sending PSYNC to master: ", err.Error())
 		return
 	}
 
-	fmt.Printf("Waiting for RDB FILE from master...\n")
+	fmt.Printf("SLAVE: Waiting for RDB FILE from master...\n")
 
 	// Get get RDB FILE from master
 	rdbFileLen := parseBulkStringLen(reader)
-	fmt.Printf("RDB FILE length: %d\n", rdbFileLen)
+	fmt.Printf("SLAVE: RDB FILE length: %d\n", rdbFileLen)
 	reader.Discard(rdbFileLen)
 
-	fmt.Printf("RDB FILE received\n")
+	fmt.Printf("SLAVE: RDB FILE received\n")
 
 	r.slaveReplicationOffset = 0
 	// Handle commands from master
 	for {
+		fmt.Printf("Slave replication offset: %d\n", r.slaveReplicationOffset)
 		countingReader.n = 0
 		command := parseCommand(reader)
 		if command == nil {
@@ -70,8 +71,8 @@ func (r *redisServer) slaveSetupReplication() {
 		}
 
 		writer.Flush()
-
 		r.slaveReplicationOffset += countingReader.n
+
 		fmt.Printf("Slave replication offset: %d\n", r.slaveReplicationOffset)
 	}
 }
@@ -157,7 +158,7 @@ func (r *redisServer) slaveHandleGETACK(writer *bufio.Writer, command *RedisComm
 		return
 	}
 
-	if strings.ToUpper((command.Parameters[0])) == "GETACK" &&
+	if strings.ToUpper(command.Parameters[0]) == "GETACK" &&
 		command.Parameters[1] == "*" {
 		writeBulkStringArray(writer, []string{"REPLCONF", "ACK", fmt.Sprintf("%d", r.slaveReplicationOffset)})
 		return

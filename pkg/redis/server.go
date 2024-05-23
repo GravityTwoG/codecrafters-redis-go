@@ -129,12 +129,12 @@ func (r *redisServer) handleConnection(conn net.Conn) {
 			return
 		}
 
-		r.handleCommand(conn, reader, writer, command)
+		r.handleCommand(writer, command)
 		writer.Flush()
 	}
 }
 
-func (r *redisServer) handleCommand(conn net.Conn, reader *bufio.Reader, writer *bufio.Writer, command *RedisCommand) {
+func (r *redisServer) handleCommand(writer *bufio.Writer, command *RedisCommand) {
 	if command.Name == "PING" {
 		writeSimpleString(writer, "PONG")
 		return
