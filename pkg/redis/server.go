@@ -124,6 +124,9 @@ func (r *redisServer) handleConnection(conn net.Conn) {
 
 		if command.Name == "PSYNC" {
 			slaveConnection = true
+			r.masterHandlePSYNC(writer, command)
+			r.masterHandleSlave(conn, reader)
+			return
 		}
 
 		r.handleCommand(conn, reader, writer, command)
@@ -159,12 +162,6 @@ func (r *redisServer) handleCommand(conn net.Conn, reader *bufio.Reader, writer 
 
 	if command.Name == "REPLCONF" {
 		r.masterHandleREPLCONF(writer, command)
-		return
-	}
-
-	if command.Name == "PSYNC" {
-		r.masterHandlePSYNC(writer, command)
-		r.masterHandleSlave(conn, reader)
 		return
 	}
 

@@ -24,6 +24,17 @@ func (w *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
+func (r *redisServer) masterHandleSlave(conn net.Conn, _ *bufio.Reader) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	r.connectedReplicas = append(r.connectedReplicas, Replica{
+		conn:    conn,
+		pending: false,
+		mutex:   &sync.Mutex{},
+	})
+}
+
 func (r *redisServer) masterSendRDBFile(writer *bufio.Writer) {
 	content, err := utils.HexToBin("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2")
 	if err != nil {
@@ -63,13 +74,16 @@ func (r *redisServer) masterSendSET(command *RedisCommand) {
 }
 
 func (r *redisServer) masterSendGETACKtoReplica(
-	replica *Replica,
+	replica *Replica, timeout time.Duration,
 ) bool {
+
 	writer := bufio.NewWriter(replica.conn)
 	reader := bufio.NewReader(replica.conn)
 
 	writeBulkStringArray(writer, []string{"REPLCONF", "GETACK", "*"})
 	writer.Flush()
+
+	replica.conn.SetReadDeadline(time.Now().Add(timeout))
 
 	command := parseCommand(reader)
 	if command != nil &&
@@ -108,7 +122,7 @@ func (r *redisServer) masterSendGETACK(
 
 			fmt.Printf("Sending GETACK to: %s\n", replicaAddr)
 
-			acknowledged := r.masterSendGETACKtoReplica(currentReplica)
+			acknowledged := r.masterSendGETACKtoReplica(currentReplica, timeout)
 			if acknowledged {
 				fmt.Printf("Slave acknowledged GETACK: %s\n", replicaAddr)
 				acksChan <- struct{}{}
@@ -138,23 +152,8 @@ func (r *redisServer) masterSendGETACK(
 		case <-doneChan:
 			fmt.Println("All acknowledges sent")
 			return acks
-
-		case <-time.After(timeout):
-			fmt.Println("Timeout reached")
-			return acks
 		}
 	}
-}
-
-func (r *redisServer) masterHandleSlave(conn net.Conn, _ *bufio.Reader) {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	r.connectedReplicas = append(r.connectedReplicas, Replica{
-		conn:    conn,
-		pending: false,
-		mutex:   &sync.Mutex{},
-	})
 }
 
 func (r *redisServer) masterHandleREPLCONF(writer *bufio.Writer, command *RedisCommand) {
