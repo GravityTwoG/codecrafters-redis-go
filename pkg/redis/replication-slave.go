@@ -4,11 +4,23 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
 	"time"
 )
+
+type countingReader struct {
+	io.Reader
+	n int
+}
+
+func (w *countingReader) Read(p []byte) (int, error) {
+	n, err := w.Reader.Read(p)
+	w.n += n
+	return n, err
+}
 
 func (r *redisServer) slaveSetupReplication() {
 	// Connect to master
@@ -51,12 +63,12 @@ func (r *redisServer) slaveSetupReplication() {
 	reader.Discard(rdbFileLen)
 
 	fmt.Printf("SLAVE: RDB FILE received\n")
+	fmt.Printf("SLAVE: connected to master\n")
 
 	r.slaveReplicationOffset = 0
+	countingReader.n = 0
 	// Handle commands from master
 	for {
-		fmt.Printf("Slave replication offset: %d\n", r.slaveReplicationOffset)
-		countingReader.n = 0
 		command := parseCommand(reader)
 		if command == nil {
 			break
@@ -67,11 +79,11 @@ func (r *redisServer) slaveSetupReplication() {
 		} else if command.Name == "REPLCONF" {
 			r.slaveHandleGETACK(writer, command)
 		} else if command.Name == "PING" {
-			fmt.Printf("PING from master\n")
+			fmt.Printf("SLAVE: PING from master\n")
 		}
 
 		writer.Flush()
-		r.slaveReplicationOffset += countingReader.n
+		r.slaveReplicationOffset = countingReader.n - reader.Buffered()
 
 		fmt.Printf("Slave replication offset: %d\n", r.slaveReplicationOffset)
 	}

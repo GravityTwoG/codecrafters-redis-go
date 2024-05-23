@@ -3,7 +3,6 @@ package redis
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -12,17 +11,6 @@ import (
 
 	"github.com/codecrafters-io/redis-starter-go/pkg/utils"
 )
-
-type countingReader struct {
-	io.Reader
-	n int
-}
-
-func (w *countingReader) Read(p []byte) (int, error) {
-	n, err := w.Reader.Read(p)
-	w.n += n
-	return n, err
-}
 
 func (r *redisServer) masterHandleSlave(conn net.Conn, _ *bufio.Reader) {
 	r.mutex.Lock()
