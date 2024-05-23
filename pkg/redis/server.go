@@ -230,6 +230,9 @@ func (r *redisServer) handleGET(writer *bufio.Writer, command *RedisCommand) {
 
 func (r *redisServer) handleINFO(writer *bufio.Writer, command *RedisCommand) {
 	if len(command.Parameters) == 1 {
+		r.mutex.Lock()
+		defer r.mutex.Unlock()
+
 		key := command.Parameters[0]
 		if strings.ToUpper(key) == "REPLICATION" {
 			response := "# Replication\r\n"

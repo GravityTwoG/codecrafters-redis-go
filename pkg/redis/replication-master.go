@@ -39,6 +39,7 @@ func (r *redisServer) masterSendRDBFile(writer *bufio.Writer) {
 func (r *redisServer) masterSendSET(command *RedisCommand) {
 	wg := &sync.WaitGroup{}
 
+	r.mutex.Lock()
 	for i := range r.connectedReplicas {
 		wg.Add(1)
 		go func(currentReplica *Replica) {
@@ -56,6 +57,8 @@ func (r *redisServer) masterSendSET(command *RedisCommand) {
 			fmt.Printf("Sent SET to slave: %s\n", replicaAddr)
 		}(&r.connectedReplicas[i])
 	}
+	r.mutex.Unlock()
+
 	wg.Wait()
 }
 
@@ -86,15 +89,19 @@ func (r *redisServer) masterSendGETACK(
 ) int {
 	fmt.Printf("Sending GETACK to slaves with timeout: %s\n", timeout.String())
 
-	acksChan := make(chan int)
+	acksChan := make(chan struct{})
+	wg := &sync.WaitGroup{}
 
-	for i, replica := range r.connectedReplicas {
+	r.mutex.Lock()
+	for i := range r.connectedReplicas {
+		wg.Add(1)
 		go func(currentReplica *Replica) {
+			defer wg.Done()
 			currentReplica.mutex.Lock()
 			defer currentReplica.mutex.Unlock()
 
-			replicaAddr := replica.conn.RemoteAddr().String()
-			if !replica.pending {
+			replicaAddr := currentReplica.conn.RemoteAddr().String()
+			if !currentReplica.pending {
 				fmt.Printf("Slave not pending: %s\n", replicaAddr)
 				return
 			}
@@ -104,12 +111,21 @@ func (r *redisServer) masterSendGETACK(
 			acknowledged := r.masterSendGETACKtoReplica(currentReplica)
 			if acknowledged {
 				fmt.Printf("Slave acknowledged GETACK: %s\n", replicaAddr)
-				acksChan <- 1
+				acksChan <- struct{}{}
 			} else {
 				fmt.Printf("Slave not acknowledged GETACK: %s\n", replicaAddr)
 			}
 		}(&r.connectedReplicas[i])
 	}
+	r.mutex.Unlock()
+
+	doneChan := make(chan struct{})
+
+	go func() {
+		wg.Wait()
+		close(doneChan)
+		close(acksChan)
+	}()
 
 	acks := 0
 	for {
@@ -119,6 +135,9 @@ func (r *redisServer) masterSendGETACK(
 			if acks == replicas {
 				return acks
 			}
+		case <-doneChan:
+			fmt.Println("All acknowledges sent")
+			return acks
 
 		case <-time.After(timeout):
 			fmt.Println("Timeout reached")
