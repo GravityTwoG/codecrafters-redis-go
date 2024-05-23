@@ -64,10 +64,8 @@ func (r *redisServer) masterSendGETACKtoReplica(
 ) bool {
 	writer := bufio.NewWriter(replica.conn)
 	reader := bufio.NewReader(replica.conn)
-	replicaAddr := replica.conn.RemoteAddr().String()
 
 	writeBulkStringArray(writer, []string{"REPLCONF", "GETACK", "*"})
-	fmt.Printf("Sending GETACK to slave: %s\n", replicaAddr)
 	writer.Flush()
 
 	command := parseCommand(reader)
@@ -86,20 +84,22 @@ func (r *redisServer) masterSendGETACKtoReplica(
 func (r *redisServer) masterSendGETACK(
 	replicas int, timeout time.Duration,
 ) int {
-	acksChan := make(chan int)
-
 	fmt.Printf("Sending GETACK to slaves with timeout: %s\n", timeout.String())
 
-	for i, replica := range r.connectedReplicas {
-		replicaAddr := replica.conn.RemoteAddr().String()
-		if !replica.pending {
-			fmt.Printf("Slave not pending: %s\n", replicaAddr)
-			continue
-		}
+	acksChan := make(chan int)
 
+	for i, replica := range r.connectedReplicas {
 		go func(currentReplica *Replica) {
 			currentReplica.mutex.Lock()
 			defer currentReplica.mutex.Unlock()
+
+			replicaAddr := replica.conn.RemoteAddr().String()
+			if !replica.pending {
+				fmt.Printf("Slave not pending: %s\n", replicaAddr)
+				return
+			}
+
+			fmt.Printf("Sending GETACK to: %s\n", replicaAddr)
 
 			acknowledged := r.masterSendGETACKtoReplica(currentReplica)
 			if acknowledged {
@@ -127,8 +127,9 @@ func (r *redisServer) masterSendGETACK(
 	}
 }
 
-func (r *redisServer) masterHandleSlave(conn net.Conn, _ *bufio.Reader, writer *bufio.Writer) {
-	r.masterSendRDBFile(writer)
+func (r *redisServer) masterHandleSlave(conn net.Conn, _ *bufio.Reader) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
 
 	r.connectedReplicas = append(r.connectedReplicas, Replica{
 		conn:    conn,
@@ -167,6 +168,8 @@ func (r *redisServer) masterHandlePSYNC(writer *bufio.Writer, command *RedisComm
 	}
 
 	writeSimpleString(writer, fmt.Sprintf("FULLRESYNC %s %d", r.replicationId, r.replicationOffset))
+
+	r.masterSendRDBFile(writer)
 }
 
 func (r *redisServer) masterHandleWAIT(writer *bufio.Writer, command *RedisCommand) {
@@ -189,7 +192,8 @@ func (r *redisServer) masterHandleWAIT(writer *bufio.Writer, command *RedisComma
 		return
 	}
 
-	acks := r.masterSendGETACK(replicas, time.Duration(timeoutMs)*time.Millisecond)
+	timeout := time.Duration(timeoutMs) * time.Millisecond
+	acks := r.masterSendGETACK(replicas, timeout)
 	writeInteger(writer, fmt.Sprintf("%d", acks))
 	fmt.Printf("Received ACKS: %d\n", acks)
 }

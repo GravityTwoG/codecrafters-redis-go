@@ -34,6 +34,7 @@ type redisServer struct {
 
 	slavePorts        []string
 	connectedReplicas []Replica
+	mutex             *sync.Mutex
 
 	replicaOf              string
 	replicationId          string
@@ -60,6 +61,7 @@ func NewRedisServer(host string, port string, replicaOf string) *redisServer {
 
 		slavePorts:        make([]string, 0),
 		connectedReplicas: make([]Replica, 0),
+		mutex:             &sync.Mutex{},
 
 		replicaOf:              replicaOf,
 		replicationId:          replicationId,
@@ -162,7 +164,7 @@ func (r *redisServer) handleCommand(conn net.Conn, reader *bufio.Reader, writer 
 
 	if command.Name == "PSYNC" {
 		r.masterHandlePSYNC(writer, command)
-		r.masterHandleSlave(conn, reader, writer)
+		r.masterHandleSlave(conn, reader)
 		return
 	}
 
