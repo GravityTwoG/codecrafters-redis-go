@@ -25,6 +25,9 @@ type redisServer struct {
 	host string
 	port string
 
+	dir        string
+	dbfilename string
+
 	role string
 
 	slavePorts        []string
@@ -39,18 +42,21 @@ type redisServer struct {
 	store *redisstore.RedisStore
 }
 
-func NewRedisServer(host string, port string, replicaOf string) *redisServer {
+func NewRedisServer(config *RedisConfig) *redisServer {
 
 	var role = "master"
 	var replicationId = utils.RandString(40)
-	if replicaOf != "" {
+	if config.ReplicaOf != "" {
 		role = "slave"
 		replicationId = ""
 	}
 
 	return &redisServer{
-		host: host,
-		port: port,
+		host: config.Host,
+		port: config.Port,
+
+		dir:        config.Dir,
+		dbfilename: config.DBFilename,
 
 		role: role,
 
@@ -58,7 +64,7 @@ func NewRedisServer(host string, port string, replicaOf string) *redisServer {
 		connectedReplicas: make([]Replica, 0),
 		mutex:             &sync.Mutex{},
 
-		replicaOf:              replicaOf,
+		replicaOf:              config.ReplicaOf,
 		replicationId:          replicationId,
 		replicationOffset:      0,
 		slaveReplicationOffset: 0,
@@ -151,6 +157,9 @@ func (r *redisServer) handleCommand(writer *bufio.Writer, command *protocol.Redi
 
 	case protocol.WAIT:
 		r.masterHandleWAIT(writer, command)
+
+	case protocol.CONFIG:
+		r.handleCONFIG(writer, command)
 
 	default:
 		protocol.WriteError(writer, "ERROR: Unknown command")
@@ -245,4 +254,35 @@ func (r *redisServer) handleINFO(writer *bufio.Writer, command *protocol.RedisCo
 	response += fmt.Sprintf("repl_backlog_histlen:%d", 0)
 
 	protocol.WriteBulkString(writer, response)
+}
+
+func (r *redisServer) handleCONFIG(
+	writer *bufio.Writer, command *protocol.RedisCommand,
+) {
+	if len(command.Parameters) != 2 {
+		protocol.WriteError(writer, "ERROR: CONFIG. Invalid number of parameters")
+		return
+	}
+
+	if strings.ToUpper(command.Parameters[0]) != "GET" {
+		protocol.WriteError(
+			writer,
+			fmt.Sprintf("ERROR: CONFIG. Invalid parameter %s", command.Parameters[0]),
+		)
+		return
+	}
+
+	key := command.Parameters[1]
+
+	if key == "dir" {
+		protocol.WriteBulkStringArray(writer, []string{"dir", r.dir})
+		return
+	}
+
+	if key == "dbfilename" {
+		protocol.WriteBulkStringArray(writer, []string{"dbfilename", r.dbfilename})
+		return
+	}
+
+	protocol.WriteError(writer, "ERROR: CONFIG. Invalid key")
 }

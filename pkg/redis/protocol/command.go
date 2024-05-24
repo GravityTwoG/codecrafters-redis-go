@@ -13,6 +13,8 @@ const (
 
 	REPLCONF = "REPLCONF"
 	WAIT     = "WAIT"
+
+	CONFIG = "CONFIG"
 )
 
 type RedisCommand struct {
