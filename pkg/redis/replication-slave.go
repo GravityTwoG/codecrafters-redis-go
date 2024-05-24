@@ -4,25 +4,14 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"strconv"
 	"strings"
 	"time"
 
 	protocol "github.com/codecrafters-io/redis-starter-go/pkg/redis/protocol"
+	"github.com/codecrafters-io/redis-starter-go/pkg/utils"
 )
-
-type countingReader struct {
-	io.Reader
-	n int
-}
-
-func (w *countingReader) Read(p []byte) (int, error) {
-	n, err := w.Reader.Read(p)
-	w.n += n
-	return n, err
-}
 
 func (r *redisServer) slaveSetupReplication() {
 	// Connect to master
@@ -32,9 +21,9 @@ func (r *redisServer) slaveSetupReplication() {
 		return
 	}
 
-	countingReader := &countingReader{
+	countingReader := &utils.CountingReader{
 		Reader: conn,
-		n:      0,
+		N:      0,
 	}
 	reader := bufio.NewReader(countingReader)
 	writer := bufio.NewWriter(conn)
@@ -68,7 +57,7 @@ func (r *redisServer) slaveSetupReplication() {
 	fmt.Printf("SLAVE: connected to master\n")
 
 	r.slaveReplicationOffset = 0
-	readBefore := countingReader.n - reader.Buffered()
+	readBefore := countingReader.N - reader.Buffered()
 	// Handle commands from master
 	for {
 		command := protocol.ParseCommand(reader)
@@ -85,7 +74,7 @@ func (r *redisServer) slaveSetupReplication() {
 		}
 
 		writer.Flush()
-		r.slaveReplicationOffset = countingReader.n - reader.Buffered() - readBefore
+		r.slaveReplicationOffset = countingReader.N - reader.Buffered() - readBefore
 
 		fmt.Printf("Slave replication offset: %d\n", r.slaveReplicationOffset)
 	}

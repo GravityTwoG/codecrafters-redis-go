@@ -18,6 +18,7 @@ import (
 type Replica struct {
 	conn    net.Conn
 	pending bool
+	offset  int
 	mutex   *sync.Mutex
 }
 

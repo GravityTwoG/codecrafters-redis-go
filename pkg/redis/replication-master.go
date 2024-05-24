@@ -20,6 +20,7 @@ func (r *redisServer) masterHandleSlave(conn net.Conn, _ *bufio.Reader) {
 	r.connectedReplicas = append(r.connectedReplicas, Replica{
 		conn:    conn,
 		pending: false,
+		offset:  0,
 		mutex:   &sync.Mutex{},
 	})
 }
@@ -49,11 +50,16 @@ func (r *redisServer) masterSendSET(command *protocol.RedisCommand) {
 			currentReplica.mutex.Lock()
 			defer currentReplica.mutex.Unlock()
 
-			writer := bufio.NewWriter(currentReplica.conn)
+			countingWriter := &utils.CountingWriter{
+				Writer: currentReplica.conn,
+				N:      0,
+			}
+			writer := bufio.NewWriter(countingWriter)
 
 			protocol.WriteBulkStringArray(writer, command.ToStringArray())
 			writer.Flush()
 			currentReplica.pending = true
+			currentReplica.offset += countingWriter.N
 			fmt.Printf("Sent SET to slave: %s\n", replicaAddr)
 		}(&r.connectedReplicas[i])
 	}
@@ -65,8 +71,11 @@ func (r *redisServer) masterSendSET(command *protocol.RedisCommand) {
 func (r *redisServer) masterSendGETACKtoReplica(
 	replica *Replica, timeout time.Duration,
 ) bool {
-
-	writer := bufio.NewWriter(replica.conn)
+	countingWriter := &utils.CountingWriter{
+		Writer: replica.conn,
+		N:      0,
+	}
+	writer := bufio.NewWriter(countingWriter)
 	reader := bufio.NewReader(replica.conn)
 
 	protocol.WriteBulkStringArray(writer, []string{
@@ -74,19 +83,35 @@ func (r *redisServer) masterSendGETACKtoReplica(
 	})
 	writer.Flush()
 
+	expectedOffset := replica.offset
+	replica.offset += countingWriter.N
+
 	replica.conn.SetReadDeadline(time.Now().Add(timeout))
 
 	command := protocol.ParseCommand(reader)
-	if command != nil &&
-		command.Name == protocol.REPLCONF &&
-		command.Parameters[0] == "ACK" {
-
-		replica.pending = false
-
-		return true
+	if command == nil {
+		return false
+	}
+	if command.Name != protocol.REPLCONF || command.Parameters[0] != "ACK" {
+		fmt.Println("Error: Expected REPLCONF ACK")
+		return false
 	}
 
-	return false
+	actualOffset, err := strconv.Atoi(command.Parameters[1])
+	if err != nil {
+		fmt.Println("Error converting offset: ", err.Error())
+		return false
+	}
+
+	if actualOffset != expectedOffset {
+		fmt.Printf("Expected offset: %d\n", expectedOffset)
+		fmt.Printf("Actual offset: %d\n", actualOffset)
+		return false
+	}
+
+	replica.pending = false
+
+	return true
 }
 
 func (r *redisServer) masterSendGETACK(
