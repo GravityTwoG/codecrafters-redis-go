@@ -149,6 +149,9 @@ func (r *redisServer) handleCommand(writer *bufio.Writer, command *protocol.Redi
 	case protocol.GET:
 		r.handleGET(writer, command)
 
+	case protocol.KEYS:
+		r.handleKEYS(writer, command)
+
 	case protocol.INFO:
 		r.handleINFO(writer, command)
 
@@ -285,4 +288,18 @@ func (r *redisServer) handleCONFIG(
 	}
 
 	protocol.WriteError(writer, "ERROR: CONFIG. Invalid key")
+}
+
+func (r *redisServer) handleKEYS(writer *bufio.Writer, command *protocol.RedisCommand) {
+	if len(command.Parameters) != 1 {
+		protocol.WriteError(writer, "ERROR: KEYS. Invalid number of parameters")
+		return
+	}
+
+	if command.Parameters[0] != "*" {
+		protocol.WriteError(writer, "ERROR: KEYS. Not supported")
+		return
+	}
+
+	protocol.WriteBulkStringArray(writer, r.store.Keys())
 }

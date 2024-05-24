@@ -72,3 +72,16 @@ func (s *RedisStore) Get(key string) (string, bool, error) {
 	fmt.Printf("GET key: %s, value: %s\n", key, value.Value)
 	return value.Value, ok, nil
 }
+
+func (s *RedisStore) Keys() []string {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	keys := make([]string, 0, len(s.store))
+
+	for key := range s.store {
+		keys = append(keys, key)
+	}
+
+	return keys
+}

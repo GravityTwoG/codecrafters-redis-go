@@ -4,8 +4,9 @@ const (
 	PING = "PING"
 	ECHO = "ECHO"
 
-	SET = "SET"
-	GET = "GET"
+	SET  = "SET"
+	GET  = "GET"
+	KEYS = "KEYS"
 
 	PSYNC = "PSYNC"
 
