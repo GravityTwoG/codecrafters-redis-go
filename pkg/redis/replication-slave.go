@@ -68,7 +68,7 @@ func (r *redisServer) slaveSetupReplication() {
 	fmt.Printf("SLAVE: connected to master\n")
 
 	r.slaveReplicationOffset = 0
-	countingReader.n = 0
+	readBefore := countingReader.n - reader.Buffered()
 	// Handle commands from master
 	for {
 		command := protocol.ParseCommand(reader)
@@ -85,7 +85,7 @@ func (r *redisServer) slaveSetupReplication() {
 		}
 
 		writer.Flush()
-		r.slaveReplicationOffset = countingReader.n - reader.Buffered()
+		r.slaveReplicationOffset = countingReader.n - reader.Buffered() - readBefore
 
 		fmt.Printf("Slave replication offset: %d\n", r.slaveReplicationOffset)
 	}
