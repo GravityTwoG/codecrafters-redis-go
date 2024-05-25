@@ -14,6 +14,7 @@ import (
 	redisstore "github.com/codecrafters-io/redis-starter-go/pkg/redis/store"
 
 	master "github.com/codecrafters-io/redis-starter-go/pkg/redis/master"
+	slave "github.com/codecrafters-io/redis-starter-go/pkg/redis/slave"
 )
 
 type redisServer struct {
@@ -26,20 +27,22 @@ type redisServer struct {
 	role string
 
 	master *master.Master
-
-	replicaOf              string
-	slaveReplicationOffset int
+	slave  *slave.Slave
 
 	store *redisstore.RedisStore
 }
 
 func NewRedisServer(config *RedisConfig) *redisServer {
+	store := redisstore.NewRedisStore()
 
 	role := "slave"
 	var m *master.Master = nil
+	var s *slave.Slave = nil
 	if config.ReplicaOf == "" {
 		role = "master"
 		m = master.NewMaster()
+	} else {
+		s = slave.NewSlave(store, config.Port, config.ReplicaOf)
 	}
 
 	return &redisServer{
@@ -52,11 +55,9 @@ func NewRedisServer(config *RedisConfig) *redisServer {
 		role: role,
 
 		master: m,
+		slave:  s,
 
-		replicaOf:              config.ReplicaOf,
-		slaveReplicationOffset: 0,
-
-		store: redisstore.NewRedisStore(),
+		store: store,
 	}
 }
 
@@ -73,7 +74,7 @@ func (r *redisServer) Start() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			r.slaveSetupReplication()
+			r.slave.SetupReplication()
 		}()
 	}
 
