@@ -12,15 +12,9 @@ import (
 
 	protocol "github.com/codecrafters-io/redis-starter-go/pkg/redis/protocol"
 	redisstore "github.com/codecrafters-io/redis-starter-go/pkg/redis/store"
-	"github.com/codecrafters-io/redis-starter-go/pkg/utils"
-)
 
-type Replica struct {
-	conn    net.Conn
-	pending bool
-	offset  int
-	mutex   *sync.Mutex
-}
+	master "github.com/codecrafters-io/redis-starter-go/pkg/redis/master"
+)
 
 type redisServer struct {
 	host string
@@ -31,13 +25,9 @@ type redisServer struct {
 
 	role string
 
-	slavePorts        []string
-	connectedReplicas []Replica
-	mutex             *sync.Mutex
+	master *master.Master
 
 	replicaOf              string
-	replicationId          string
-	replicationOffset      int
 	slaveReplicationOffset int
 
 	store *redisstore.RedisStore
@@ -45,11 +35,11 @@ type redisServer struct {
 
 func NewRedisServer(config *RedisConfig) *redisServer {
 
-	var role = "master"
-	var replicationId = utils.RandString(40)
-	if config.ReplicaOf != "" {
-		role = "slave"
-		replicationId = ""
+	role := "slave"
+	var m *master.Master = nil
+	if config.ReplicaOf == "" {
+		role = "master"
+		m = master.NewMaster()
 	}
 
 	return &redisServer{
@@ -61,13 +51,9 @@ func NewRedisServer(config *RedisConfig) *redisServer {
 
 		role: role,
 
-		slavePorts:        make([]string, 0),
-		connectedReplicas: make([]Replica, 0),
-		mutex:             &sync.Mutex{},
+		master: m,
 
 		replicaOf:              config.ReplicaOf,
-		replicationId:          replicationId,
-		replicationOffset:      0,
 		slaveReplicationOffset: 0,
 
 		store: redisstore.NewRedisStore(),
@@ -124,10 +110,14 @@ func (r *redisServer) handleConnection(conn net.Conn) {
 			return
 		}
 
-		if command.Name == protocol.PSYNC {
+		if command.Name == protocol.PSYNC && r.master != nil {
+			err := r.master.HandlePSYNC(writer, command)
+			if err != nil {
+				fmt.Println("Error handling PSYNC: ", err.Error())
+				return
+			}
 			slaveConnection = true
-			r.masterHandlePSYNC(writer, command)
-			r.masterHandleSlave(conn, reader)
+			r.master.HandleSlave(conn, reader)
 			return
 		}
 
@@ -157,10 +147,18 @@ func (r *redisServer) handleCommand(writer *bufio.Writer, command *protocol.Redi
 		r.handleINFO(writer, command)
 
 	case protocol.REPLCONF:
-		r.masterHandleREPLCONF(writer, command)
+		if r.master == nil {
+			protocol.WriteError(writer, "ERROR: REPLCONF is not supported in slave mode")
+			return
+		}
+		r.master.HandleREPLCONF(writer, command)
 
 	case protocol.WAIT:
-		r.masterHandleWAIT(writer, command)
+		if r.master == nil {
+			protocol.WriteError(writer, "ERROR: WAIT is not supported in slave mode")
+			return
+		}
+		r.master.HandleWAIT(writer, command)
 
 	case protocol.CONFIG:
 		r.handleCONFIG(writer, command)
@@ -171,7 +169,9 @@ func (r *redisServer) handleCommand(writer *bufio.Writer, command *protocol.Redi
 }
 
 func (r *redisServer) handleSET(writer *bufio.Writer, command *protocol.RedisCommand) {
-	go r.masterSendSET(command)
+	if r.master != nil {
+		go r.master.SendSET(command)
+	}
 
 	// SET foo bar
 	if len(command.Parameters) == 2 {
@@ -243,14 +243,20 @@ func (r *redisServer) handleINFO(writer *bufio.Writer, command *protocol.RedisCo
 		return
 	}
 
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
+	connectedSlaves := 0
+	replicationId := ""
+	replicationOffset := 0
+	if r.master != nil {
+		connectedSlaves = r.master.ConnectedReplicasCount()
+		replicationId = r.master.ReplicationId()
+		replicationOffset = r.master.ReplicationOffset()
+	}
 
 	response := "# Replication\r\n"
 	response += fmt.Sprintf("role:%s\r\n", r.role)
-	response += fmt.Sprintf("connected_slaves:%d\r\n", len(r.connectedReplicas))
-	response += fmt.Sprintf("master_replid:%s\r\n", r.replicationId)
-	response += fmt.Sprintf("master_repl_offset:%d\r\n", r.replicationOffset)
+	response += fmt.Sprintf("connected_slaves:%d\r\n", connectedSlaves)
+	response += fmt.Sprintf("master_replid:%s\r\n", replicationId)
+	response += fmt.Sprintf("master_repl_offset:%d\r\n", replicationOffset)
 	response += fmt.Sprintf("second_repl_offset:%d\r\n", -1)
 	response += fmt.Sprintf("repl_backlog_active:%d\r\n", 0)
 	response += fmt.Sprintf("repl_backlog_size:%d\r\n", 1048576)
