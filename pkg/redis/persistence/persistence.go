@@ -2,6 +2,7 @@ package redis_persistence
 
 import (
 	"bufio"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -210,13 +211,6 @@ func parseKeyValue(reader *bufio.Reader) (string, *redis_value.RedisValue, error
 	if err != nil && err != ErrUnsupportedType {
 		return "", nil, err
 	}
-	var expiresAt *time.Time
-	if expiryTime != -1 {
-		t := time.Now().Add(
-			time.Duration(expiryTime) * time.Millisecond,
-		)
-		expiresAt = &t
-	}
 
 	valueType, err := reader.ReadByte()
 	if err != nil {
@@ -241,37 +235,43 @@ func parseKeyValue(reader *bufio.Reader) (string, *redis_value.RedisValue, error
 
 	return key, &redis_value.RedisValue{
 		Value:     value,
-		ExpiresAt: expiresAt,
+		ExpiresAt: expiryTime,
 	}, nil
 }
 
-func parseExpiryTime(reader *bufio.Reader) (time.Duration, error) {
+func parseExpiryTime(reader *bufio.Reader) (*time.Time, error) {
 	timeType, err := reader.ReadByte()
 	if err != nil {
-		return -1, err
+		return nil, err
 	}
 
 	if timeType == RDB_OPCODE_EXPIRE_TIME_MS {
 		ms, err := readInt64(reader)
 		if err != nil {
-			return -1, err
+			return nil, err
 		}
 
-		return time.Duration(ms) * time.Millisecond, nil
+		fmt.Println("now: ", time.Now().UnixMilli())
+		fmt.Println("ms: ", ms)
+		fmt.Println(time.UnixMilli(ms))
+
+		t := time.UnixMilli(ms)
+		return &t, nil
 	}
 
 	if timeType == RDB_OPCODE_EXPIRE_TIME {
 		sec, err := readInt32(reader)
 		if err != nil {
-			return -1, err
+			return nil, err
 		}
 
-		return time.Duration(sec) * time.Second, nil
+		t := time.Unix(int64(sec), 0)
+		return &t, nil
 	}
 
 	fmt.Println("Unsupported time type: ", timeType)
 	reader.UnreadByte()
-	return -1, ErrUnsupportedType
+	return nil, ErrUnsupportedType
 }
 
 func firstTwoBits(value byte) byte {
@@ -400,7 +400,8 @@ func readInt32(reader *bufio.Reader) (int, error) {
 	if err != nil || n != 4 {
 		return -1, err
 	}
-	return int(b[0])<<24 | int(b[1])<<16 | int(b[2])<<8 | int(b[3]), nil
+
+	return int(binary.LittleEndian.Uint32(b)), nil
 }
 
 func readInt64(reader *bufio.Reader) (int64, error) {
@@ -409,5 +410,6 @@ func readInt64(reader *bufio.Reader) (int64, error) {
 	if err != nil || n != 8 {
 		return -1, err
 	}
-	return int64(b[0])<<56 | int64(b[1])<<48 | int64(b[2])<<40 | int64(b[3])<<32 | int64(b[4])<<24 | int64(b[5])<<16 | int64(b[6])<<8 | int64(b[7]), nil
+
+	return int64(binary.LittleEndian.Uint64(b)), nil
 }
