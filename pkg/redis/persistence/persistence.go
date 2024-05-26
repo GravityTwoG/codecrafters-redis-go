@@ -2,7 +2,6 @@ package redis_persistence
 
 import (
 	"bufio"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -28,7 +27,11 @@ const RDB_LEN_32BIT = 0b10
 const RDB_SPECIAL = 0b11
 
 // last 6 bits
-const RDB_LEN_COMPRESSED = 0b000011
+const RDB_S_8BIT = 0b000000
+const RDB_S_128BIT = 0b000010
+const RDB_S_COMPRESSED = 0b000011
+
+var ErrUnsupportedType = errors.New("unsupported-type")
 
 func ParseRDBFile(dir string, dbfilename string) map[string]redis_value.RedisValue {
 	file, err := os.Open(path.Join(dir, dbfilename))
@@ -204,8 +207,6 @@ func parseDB(reader *bufio.Reader) (map[string]redis_value.RedisValue, error) {
 	}
 }
 
-var ErrUnsupportedType = errors.New("unsupported-type")
-
 func parseKeyValue(reader *bufio.Reader) (string, *redis_value.RedisValue, error) {
 	expiryTime, err := parseExpiryTime(reader)
 	if err != nil && err != ErrUnsupportedType {
@@ -274,14 +275,6 @@ func parseExpiryTime(reader *bufio.Reader) (*time.Time, error) {
 	return nil, ErrUnsupportedType
 }
 
-func firstTwoBits(value byte) byte {
-	return (value & 0b11000000) >> 6
-}
-
-func lastSixBits(value byte) byte {
-	return value & 0b00111111
-}
-
 func parseString(reader *bufio.Reader) (string, error) {
 	valueType, err := reader.ReadByte()
 	if err != nil {
@@ -306,10 +299,10 @@ func parseString(reader *bufio.Reader) (string, error) {
 		return string(str), nil
 	}
 
-	return parseSpecialString(reader)
+	return parseSpecialValue(reader)
 }
 
-func parseSpecialString(reader *bufio.Reader) (string, error) {
+func parseSpecialValue(reader *bufio.Reader) (string, error) {
 	valueType, err := reader.ReadByte()
 	if err != nil {
 		return "", err
@@ -317,14 +310,15 @@ func parseSpecialString(reader *bufio.Reader) (string, error) {
 	valueType = lastSixBits(valueType)
 	fmt.Println("Value type: ", valueType)
 
-	if valueType == 0 {
+	if valueType == RDB_S_8BIT {
 		b, err := reader.ReadByte()
 		if err != nil {
 			return "", err
 		}
 		return string([]byte{b}), nil
 	}
-	if valueType == 2 {
+
+	if valueType == RDB_S_128BIT {
 		q := make([]byte, 4)
 		n, err := reader.Read(q)
 		if n < 4 {
@@ -333,33 +327,33 @@ func parseSpecialString(reader *bufio.Reader) (string, error) {
 		return string(q), nil
 	}
 
-	fmt.Println("Compressed string: ", valueType)
+	if valueType == RDB_S_COMPRESSED {
+		compressedLen, err := parseLen(reader)
+		if err != nil {
+			return "", err
+		}
+		uncompressedLen, err := parseLen(reader)
+		if err != nil {
+			return "", err
+		}
 
-	compressedLen, err := parseLen(reader)
-	if err != nil {
-		return "", err
-	}
-	uncompressedLen, err := parseLen(reader)
-	if err != nil {
-		return "", err
-	}
-	fmt.Println("compressedLen: ", compressedLen)
-	fmt.Println("uncompressedLen: ", uncompressedLen)
-	compressed := make([]byte, compressedLen)
-	n, err := reader.Read(compressed)
-	fmt.Println("uncompressed: ")
-	if n < compressedLen {
-		return "", err
-	}
-	uncompressed, err := LZFDecompress(compressed)
+		compressed := make([]byte, compressedLen)
+		n, err := reader.Read(compressed)
+		if n < compressedLen {
+			return "", err
+		}
+		uncompressed, err := LZFDecompress(compressed)
 
-	if err != nil {
-		return "", err
+		if err != nil {
+			return "", err
+		}
+		if uncompressedLen != len(uncompressed) {
+			return "", errors.New("invalid length")
+		}
+		return string(uncompressed), nil
 	}
-	if uncompressedLen != len(uncompressed) {
-		return "", errors.New("invalid length")
-	}
-	return string(uncompressed), nil
+
+	return "", ErrUnsupportedType
 }
 
 // Parse Length Encoding
@@ -370,12 +364,12 @@ func parseLen(reader *bufio.Reader) (int, error) {
 	}
 
 	first2Bits := firstTwoBits(b)
-	if first2Bits == 0b00 {
+	if first2Bits == RDB_LEN_6BIT {
 		// next 6 bits represents length
 		return int(b), nil
 	}
 
-	if first2Bits == 0b01 {
+	if first2Bits == RDB_LEN_14BIT {
 		// next 14 bits represents length
 		nextB, err := reader.ReadByte()
 		if err != nil {
@@ -384,7 +378,7 @@ func parseLen(reader *bufio.Reader) (int, error) {
 		return int(b)<<8 | int(nextB), nil
 	}
 
-	if first2Bits == 0b10 {
+	if first2Bits == RDB_LEN_32BIT {
 		// Discard the remaining 6 bits. The next 4 bytes from the stream represent the length
 		return readInt32(reader)
 	}
@@ -392,24 +386,4 @@ func parseLen(reader *bufio.Reader) (int, error) {
 	reader.UnreadByte()
 	fmt.Println("Unsupported first 2 bits: ", first2Bits)
 	return -1, errors.New("unsupported format")
-}
-
-func readInt32(reader *bufio.Reader) (int, error) {
-	b := make([]byte, 4)
-	n, err := reader.Read(b)
-	if err != nil || n != 4 {
-		return -1, err
-	}
-
-	return int(binary.LittleEndian.Uint32(b)), nil
-}
-
-func readInt64(reader *bufio.Reader) (int64, error) {
-	b := make([]byte, 8)
-	n, err := reader.Read(b)
-	if err != nil || n != 8 {
-		return -1, err
-	}
-
-	return int64(binary.LittleEndian.Uint64(b)), nil
 }

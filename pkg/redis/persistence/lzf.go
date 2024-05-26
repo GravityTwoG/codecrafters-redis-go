@@ -11,7 +11,7 @@ import "errors"
 func LZFDecompress(data []byte) ([]byte, error) {
 	length := len(data)
 	input := data
-	output := make([]byte, len(data)*2)
+	output := make([]byte, length*2)
 
 	ip := 0
 	op := 0
