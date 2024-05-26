@@ -20,6 +20,15 @@ const RDB_OPCODE_EXPIRE_TIME = 0xFD
 const RDB_OPCODE_SELECTDB = 0xFE
 const RDB_OPCODE_EOF = 0xFF
 
+// first 2 bits
+const RDB_LEN_6BIT = 0b00
+const RDB_LEN_14BIT = 0b01
+const RDB_LEN_32BIT = 0b10
+const RDB_SPECIAL = 0b11
+
+// last 6 bits
+const RDB_LEN_COMPRESSED = 0b000011
+
 func ParseRDBFile(dir string, dbfilename string) map[string]redis_value.RedisValue {
 	file, err := os.Open(path.Join(dir, dbfilename))
 	if errors.Is(err, os.ErrNotExist) {
@@ -45,16 +54,17 @@ func ParseRDBFile(dir string, dbfilename string) map[string]redis_value.RedisVal
 	}
 
 	dbNumber := 0
+loop:
 	for {
 		opcode, err := reader.ReadByte()
 		if err != nil {
-			fmt.Println("Error reading byte: ", err.Error())
+			fmt.Println("Error reading opcode: ", err.Error())
 			return nil
 		}
-		fmt.Printf("OPCODE: %d\n", opcode)
 
 		switch opcode {
 		case RDB_OPCODE_AUX:
+			fmt.Println("RDB_OPCODE_AUX")
 			key, err := parseString(reader)
 			if err != nil {
 				fmt.Println("Error parsing key: ", err.Error())
@@ -74,12 +84,6 @@ func ParseRDBFile(dir string, dbfilename string) map[string]redis_value.RedisVal
 				return nil
 			}
 			fmt.Println("dbNumber: ", dbNumber)
-			store, err := parseDB(reader)
-			if err != nil {
-				fmt.Println("Error parsing db: ", err.Error())
-				return nil
-			}
-			return store
 
 		case RDB_OPCODE_RESIZE_DB:
 			hashTableSize, err := parseLen(reader)
@@ -101,10 +105,18 @@ func ParseRDBFile(dir string, dbfilename string) map[string]redis_value.RedisVal
 			return nil
 
 		default:
+			reader.UnreadByte()
 			fmt.Println("Unknown opcode: ", opcode)
-			return nil
+			break loop
 		}
 	}
+
+	store, err := parseDB(reader)
+	if err != nil {
+		fmt.Println("Error parsing db: ", err.Error())
+		return nil
+	}
+	return store
 }
 
 // Check magic string REDIS or [82 69 68 73 83]
@@ -169,6 +181,15 @@ const RDB_VALUE_TYPE_LQLIST = 14
 func parseDB(reader *bufio.Reader) (map[string]redis_value.RedisValue, error) {
 	store := make(map[string]redis_value.RedisValue)
 	for {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return store, err
+		}
+		if b == RDB_OPCODE_EOF {
+			return store, nil
+		}
+		reader.UnreadByte()
+
 		key, value, err := parseKeyValue(reader)
 		if err != nil {
 			return store, err
@@ -176,6 +197,8 @@ func parseDB(reader *bufio.Reader) (map[string]redis_value.RedisValue, error) {
 		if key == "" {
 			return store, nil
 		}
+
+		fmt.Printf("key: %s, value: %s\n", key, value)
 		store[key] = *value
 	}
 }
@@ -251,19 +274,92 @@ func parseExpiryTime(reader *bufio.Reader) (time.Duration, error) {
 	return -1, ErrUnsupportedType
 }
 
+func firstTwoBits(value byte) byte {
+	return (value & 0b11000000) >> 6
+}
+
+func lastSixBits(value byte) byte {
+	return value & 0b00111111
+}
+
 func parseString(reader *bufio.Reader) (string, error) {
-	len, err := parseLen(reader)
+	valueType, err := reader.ReadByte()
 	if err != nil {
 		return "", err
 	}
+	reader.UnreadByte()
 
-	str := make([]byte, len)
-	n, err := reader.Read(str)
-	if n < len {
-		return "", err
+	valueType = firstTwoBits(valueType)
+
+	if valueType != RDB_SPECIAL {
+		len, err := parseLen(reader)
+		if err != nil {
+			return "", err
+		}
+
+		str := make([]byte, len)
+		n, err := reader.Read(str)
+		if n < len {
+			return "", err
+		}
+
+		return string(str), nil
 	}
 
-	return string(str), nil
+	return parseSpecialString(reader)
+}
+
+func parseSpecialString(reader *bufio.Reader) (string, error) {
+	valueType, err := reader.ReadByte()
+	if err != nil {
+		return "", err
+	}
+	valueType = lastSixBits(valueType)
+	fmt.Println("Value type: ", valueType)
+
+	if valueType == 0 {
+		b, err := reader.ReadByte()
+		if err != nil {
+			return "", err
+		}
+		return string([]byte{b}), nil
+	}
+	if valueType == 2 {
+		q := make([]byte, 4)
+		n, err := reader.Read(q)
+		if n < 4 {
+			return "", err
+		}
+		return string(q), nil
+	}
+
+	fmt.Println("Compressed string: ", valueType)
+
+	compressedLen, err := parseLen(reader)
+	if err != nil {
+		return "", err
+	}
+	uncompressedLen, err := parseLen(reader)
+	if err != nil {
+		return "", err
+	}
+	fmt.Println("compressedLen: ", compressedLen)
+	fmt.Println("uncompressedLen: ", uncompressedLen)
+	compressed := make([]byte, compressedLen)
+	n, err := reader.Read(compressed)
+	fmt.Println("uncompressed: ")
+	if n < compressedLen {
+		return "", err
+	}
+	uncompressed, err := LZFDecompress(compressed)
+
+	if err != nil {
+		return "", err
+	}
+	if uncompressedLen != len(uncompressed) {
+		return "", errors.New("invalid length")
+	}
+	return string(uncompressed), nil
 }
 
 // Parse Length Encoding
@@ -273,7 +369,7 @@ func parseLen(reader *bufio.Reader) (int, error) {
 		return -1, err
 	}
 
-	first2Bits := 0b11000000 & b >> 6
+	first2Bits := firstTwoBits(b)
 	if first2Bits == 0b00 {
 		// next 6 bits represents length
 		return int(b), nil
@@ -294,6 +390,7 @@ func parseLen(reader *bufio.Reader) (int, error) {
 	}
 
 	reader.UnreadByte()
+	fmt.Println("Unsupported first 2 bits: ", first2Bits)
 	return -1, errors.New("unsupported format")
 }
 
