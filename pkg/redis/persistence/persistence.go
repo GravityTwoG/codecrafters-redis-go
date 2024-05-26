@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"time"
@@ -32,129 +31,6 @@ const RDB_SPECIAL_INTS_8BIT = 0b000000
 const RDB_SPECIAL_INTS_16BIT = 0b000001
 const RDB_SPECIAL_INTS_32BIT = 0b000010
 const RDB_SPECIAL_S_COMPRESSED = 0b000011
-
-var ErrUnsupportedType = errors.New("unsupported-type")
-
-func ParseRDBFile(dir string, dbfilename string) map[string]redis_value.RedisValue {
-	file, err := os.Open(path.Join(dir, dbfilename))
-	if errors.Is(err, os.ErrNotExist) {
-		fmt.Println("File not found: ", err.Error())
-		return nil
-	}
-	if err != nil {
-		fmt.Println("Error opening file: ", err.Error())
-		return nil
-	}
-	defer file.Close()
-
-	reader := bufio.NewReader(file)
-	err = verifyMagic(reader)
-	if err != nil {
-		fmt.Println("Error verifying magic: ", err.Error())
-		return nil
-	}
-	err = verifyVersion(reader)
-	if err != nil {
-		fmt.Println("Error verifying version: ", err.Error())
-		return nil
-	}
-
-	dbNumber := 0
-loop:
-	for {
-		opcode, err := reader.ReadByte()
-		if err != nil {
-			fmt.Println("Error reading opcode: ", err.Error())
-			return nil
-		}
-
-		switch opcode {
-		case RDB_OPCODE_AUX:
-			fmt.Println("RDB_OPCODE_AUX")
-			key, err := parseString(reader)
-			if err != nil {
-				fmt.Println("Error parsing key: ", err.Error())
-				return nil
-			}
-			value, err := parseString(reader)
-			if err != nil {
-				fmt.Println("Error parsing value: ", err.Error())
-				return nil
-			}
-			fmt.Printf("%s: %s\n", key, value)
-
-		case RDB_OPCODE_SELECTDB:
-			dbNumber, err = parseLen(reader)
-			if err != nil {
-				fmt.Println("Error parsing int: ", err.Error())
-				return nil
-			}
-			fmt.Println("dbNumber: ", dbNumber)
-
-		case RDB_OPCODE_RESIZE_DB:
-			hashTableSize, err := parseLen(reader)
-			if err != nil {
-				fmt.Println("Error parsing len: ", err.Error())
-				return nil
-			}
-			fmt.Println("hashTableSize: ", hashTableSize)
-
-			expireHashTableSize, err := parseLen(reader)
-			if err != nil {
-				fmt.Println("Error parsing len: ", err.Error())
-				return nil
-			}
-			fmt.Println("expireHashTableSize: ", expireHashTableSize)
-
-		case RDB_OPCODE_EOF:
-			fmt.Println("EOF")
-			return nil
-
-		default:
-			reader.UnreadByte()
-			fmt.Println("Unknown opcode: ", opcode)
-			break loop
-		}
-	}
-
-	store, err := parseDB(reader)
-	if err != nil {
-		fmt.Println("Error parsing db: ", err.Error())
-		return nil
-	}
-	return store
-}
-
-// Check magic string REDIS or [82 69 68 73 83]
-func verifyMagic(reader *bufio.Reader) error {
-	magic := make([]byte, 5)
-	n, err := reader.Read(magic)
-	if n < 5 {
-		fmt.Println("Error reading magic: ", err.Error())
-		return err
-	}
-	if string(magic) != RDB_MAGIC {
-		fmt.Println("Magic not REDIS: ", string(magic))
-		return nil
-	}
-
-	return nil
-}
-
-func verifyVersion(reader *bufio.Reader) error {
-	version := make([]byte, 4)
-	n, err := reader.Read(version)
-	if n < 4 {
-		fmt.Println("Error reading version: ", err.Error())
-		return err
-	}
-	if err != nil {
-		fmt.Println("Error reading version: ", err.Error())
-		return err
-	}
-	fmt.Println("Version: ", version)
-	return nil
-}
 
 const RDB_VALUE_TYPE_STRING = 0
 const RDB_VALUE_TYPE_LIST = 1
@@ -184,6 +60,130 @@ const RDB_VALUE_TYPE_HMZLIST = 13
 // List in quicklist
 const RDB_VALUE_TYPE_LQLIST = 14
 
+var ErrUnsupportedType = errors.New("unsupported-type")
+
+func ParseRDBFile(dir string, dbfilename string) map[string]redis_value.RedisValue {
+	file, err := os.Open(path.Join(dir, dbfilename))
+	if errors.Is(err, os.ErrNotExist) {
+		fmt.Println("File not found: ", err.Error())
+		return nil
+	}
+	if err != nil {
+		fmt.Println("Error opening file: ", err.Error())
+		return nil
+	}
+	defer file.Close()
+
+	reader := bufio.NewReader(file)
+	err = verifyMagic(reader)
+	if err != nil {
+		fmt.Println("Error verifying magic: ", err.Error())
+		return nil
+	}
+	err = verifyVersion(reader)
+	if err != nil {
+		fmt.Println("Error verifying version: ", err.Error())
+		return nil
+	}
+
+	dbNumber := 0
+	hashTableSize := 0
+	expireHashTableSize := 0
+
+	for {
+		opcode, err := reader.ReadByte()
+		if err != nil {
+			fmt.Println("Error reading opcode: ", err.Error())
+			return nil
+		}
+
+		switch opcode {
+		case RDB_OPCODE_AUX:
+			key, err := parseString(reader)
+			if err != nil {
+				fmt.Println("Error parsing key: ", err.Error())
+				return nil
+			}
+			value, err := parseString(reader)
+			if err != nil {
+				fmt.Println("Error parsing value: ", err.Error())
+				return nil
+			}
+			fmt.Printf("%s: %s\n", key, value)
+
+		case RDB_OPCODE_SELECTDB:
+			dbNumber, err = parseLen(reader)
+			if err != nil {
+				fmt.Println("Error parsing dbNumber: ", err.Error())
+				return nil
+			}
+			fmt.Println("dbNumber: ", dbNumber)
+
+		case RDB_OPCODE_RESIZE_DB:
+			hashTableSize, err = parseLen(reader)
+			if err != nil {
+				fmt.Println("Error parsing len: ", err.Error())
+				return nil
+			}
+			fmt.Println("hashTableSize: ", hashTableSize)
+
+			expireHashTableSize, err = parseLen(reader)
+			if err != nil {
+				fmt.Println("Error parsing len: ", err.Error())
+				return nil
+			}
+			fmt.Println("expireHashTableSize: ", expireHashTableSize)
+
+			store, err := parseDB(reader)
+			if err != nil {
+				fmt.Println("Error parsing db: ", err.Error())
+				return nil
+			}
+			return store
+
+		case RDB_OPCODE_EOF:
+			fmt.Println("EOF")
+			return nil
+
+		default:
+			reader.UnreadByte()
+			fmt.Println("Unknown opcode: ", opcode)
+			return nil
+		}
+	}
+}
+
+// Check magic string REDIS or [82 69 68 73 83]
+func verifyMagic(reader *bufio.Reader) error {
+	magic := make([]byte, 5)
+	n, err := reader.Read(magic)
+	if n < 5 {
+		fmt.Println("Error reading magic: ", err.Error())
+		return err
+	}
+	if string(magic) != RDB_MAGIC {
+		fmt.Println("Magic not REDIS: ", string(magic))
+		return nil
+	}
+
+	return nil
+}
+
+func verifyVersion(reader *bufio.Reader) error {
+	version := make([]byte, 4)
+	n, err := reader.Read(version)
+	if n < 4 {
+		fmt.Println("Error reading version: ", err.Error())
+		return err
+	}
+	if err != nil {
+		fmt.Println("Error reading version: ", err.Error())
+		return err
+	}
+	fmt.Println("Version: ", string(version))
+	return nil
+}
+
 func parseDB(reader *bufio.Reader) (map[string]redis_value.RedisValue, error) {
 	store := make(map[string]redis_value.RedisValue)
 	for {
@@ -200,7 +200,7 @@ func parseDB(reader *bufio.Reader) (map[string]redis_value.RedisValue, error) {
 		if err != nil {
 			return store, err
 		}
-		if key == "" {
+		if key == "" || value == nil {
 			return store, nil
 		}
 
@@ -210,8 +210,21 @@ func parseDB(reader *bufio.Reader) (map[string]redis_value.RedisValue, error) {
 }
 
 func parseKeyValue(reader *bufio.Reader) (string, *redis_value.RedisValue, error) {
-	expiryTime, err := parseExpiryTime(reader)
-	if err != nil && err != ErrUnsupportedType {
+	b, err := reader.ReadByte()
+	if err != nil {
+		return "", nil, err
+	}
+
+	var expiryTime *time.Time = nil
+	if b == RDB_OPCODE_EXPIRE_TIME {
+		expiryTime, err = parseExpiryTimeSec(reader)
+	} else if b == RDB_OPCODE_EXPIRE_TIME_MS {
+		expiryTime, err = parseExpiryTimeMs(reader)
+	} else {
+		// there is no expiry
+		reader.UnreadByte()
+	}
+	if err != nil {
 		return "", nil, err
 	}
 
@@ -219,15 +232,16 @@ func parseKeyValue(reader *bufio.Reader) (string, *redis_value.RedisValue, error
 	if err != nil {
 		return "", nil, err
 	}
-	fmt.Println("valueType: ", valueType)
-	if valueType == RDB_OPCODE_EOF {
-		return "", nil, io.EOF
-	}
 
 	key, err := parseString(reader)
 	if err != nil {
 		fmt.Println("Error parsing key: ", err.Error())
 		return "", nil, err
+	}
+
+	if valueType != RDB_VALUE_TYPE_STRING {
+		fmt.Print("unsupported valueType: ", valueType)
+		return "", nil, ErrUnsupportedType
 	}
 
 	value, err := parseString(reader)
@@ -242,35 +256,24 @@ func parseKeyValue(reader *bufio.Reader) (string, *redis_value.RedisValue, error
 	}, nil
 }
 
-func parseExpiryTime(reader *bufio.Reader) (*time.Time, error) {
-	timeType, err := reader.ReadByte()
+func parseExpiryTimeMs(reader *bufio.Reader) (*time.Time, error) {
+	ms, err := readInt64(reader)
 	if err != nil {
 		return nil, err
 	}
 
-	if timeType == RDB_OPCODE_EXPIRE_TIME_MS {
-		ms, err := readInt64(reader)
-		if err != nil {
-			return nil, err
-		}
+	t := time.UnixMilli(ms)
+	return &t, nil
+}
 
-		t := time.UnixMilli(ms)
-		return &t, nil
+func parseExpiryTimeSec(reader *bufio.Reader) (*time.Time, error) {
+	sec, err := readInt32(reader)
+	if err != nil {
+		return nil, err
 	}
 
-	if timeType == RDB_OPCODE_EXPIRE_TIME {
-		sec, err := readInt32(reader)
-		if err != nil {
-			return nil, err
-		}
-
-		t := time.Unix(int64(sec), 0)
-		return &t, nil
-	}
-
-	fmt.Println("Unsupported time type: ", timeType)
-	reader.UnreadByte()
-	return nil, ErrUnsupportedType
+	t := time.Unix(int64(sec), 0)
+	return &t, nil
 }
 
 func parseString(reader *bufio.Reader) (string, error) {

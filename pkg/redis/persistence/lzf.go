@@ -6,6 +6,13 @@ import "errors"
  * LZF compression/decompression module. Ported from the C
  * implementation of liblzf, specfically lzf_c.c and lzf_d.c
  * @license BSD-2-Clause
+ * @author McSimp
+ * @url https://github.com/McSimp/lzfjs
+ */
+
+/**
+ * Then I ported  js implementation from lzfjs to golang
+ * lzfjs: https://github.com/McSimp/lzfjs
  */
 
 func LZFDecompress(data []byte) ([]byte, error) {
@@ -85,7 +92,7 @@ const LZF_MAX_REF = ((1 << 8) + (1 << 3))
 const LZF_MAX_LIT = (1 << 5)
 
 func FRST(data []byte, p int) int {
-	return int((data[p] << 8) | data[p+1])
+	return (int(data[p]) << 8) | int(data[p+1])
 }
 
 func NEXT(v int, data []byte, p int) int {
@@ -116,7 +123,6 @@ func LZFCompress(data []byte) ([]byte, error) {
 
 		off := ip - ref - 1
 
-		/* the next test will actually take care of this, but this is faster */
 		if ref < ip &&
 			off < LZF_MAX_OFF &&
 			ref > 0 &&
