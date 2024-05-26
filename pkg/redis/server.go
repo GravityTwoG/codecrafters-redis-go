@@ -33,7 +33,7 @@ type redisServer struct {
 }
 
 func NewRedisServer(config *RedisConfig) *redisServer {
-	store := redisstore.NewRedisStore()
+	store := redisstore.NewRedisStore(config.Dir, config.DBFilename)
 
 	role := "slave"
 	var m *master.Master = nil

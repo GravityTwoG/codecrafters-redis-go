@@ -5,22 +5,29 @@ import (
 	"fmt"
 	"sync"
 	"time"
-)
 
-type redisValue struct {
-	Value     string
-	ExpiresAt *time.Time
-}
+	redisvalue "github.com/codecrafters-io/redis-starter-go/pkg/redis/redis-value"
+
+	persistence "github.com/codecrafters-io/redis-starter-go/pkg/redis/persistence"
+)
 
 type RedisStore struct {
 	mutex *sync.Mutex
-	store map[string]redisValue
+	store map[string]redisvalue.RedisValue
 }
 
-func NewRedisStore() *RedisStore {
+func NewRedisStore(dir string, dbfilename string) *RedisStore {
+	store := make(map[string]redisvalue.RedisValue)
+	if dir != "" && dbfilename != "" {
+		st := persistence.ParseRDBFile(dir, dbfilename)
+		if st != nil {
+			store = st
+		}
+	}
+
 	return &RedisStore{
 		mutex: &sync.Mutex{},
-		store: make(map[string]redisValue),
+		store: store,
 	}
 }
 
@@ -29,7 +36,7 @@ func (s *RedisStore) Set(key string, value string) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 
-	s.store[key] = redisValue{
+	s.store[key] = redisvalue.RedisValue{
 		Value:     value,
 		ExpiresAt: nil,
 	}
@@ -46,7 +53,7 @@ func (s *RedisStore) SetWithTTL(
 	defer s.mutex.Unlock()
 
 	expiresAt := time.Now().Add(duration)
-	s.store[key] = redisValue{
+	s.store[key] = redisvalue.RedisValue{
 		Value:     value,
 		ExpiresAt: &expiresAt,
 	}
