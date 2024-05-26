@@ -164,6 +164,9 @@ func (r *redisServer) handleCommand(writer *bufio.Writer, command *protocol.Redi
 	case protocol.CONFIG:
 		r.handleCONFIG(writer, command)
 
+	case protocol.TYPE:
+		r.handleTYPE(writer, command)
+
 	default:
 		protocol.WriteError(writer, "ERROR: Unknown command")
 	}
@@ -310,4 +313,25 @@ func (r *redisServer) handleKEYS(writer *bufio.Writer, command *protocol.RedisCo
 	}
 
 	protocol.WriteBulkStringArray(writer, r.store.Keys())
+}
+
+func (r *redisServer) handleTYPE(writer *bufio.Writer, command *protocol.RedisCommand) {
+	if len(command.Parameters) != 1 {
+		protocol.WriteError(writer, "ERROR: TYPE. Invalid number of parameters")
+		return
+	}
+
+	key := command.Parameters[0]
+	_, ok, err := r.store.Get(key)
+	if err != nil {
+		protocol.WriteError(writer, err.Error())
+		return
+	}
+
+	if !ok {
+		protocol.WriteSimpleString(writer, "none")
+		return
+	}
+
+	protocol.WriteSimpleString(writer, "string")
 }

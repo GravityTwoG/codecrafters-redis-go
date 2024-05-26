@@ -16,6 +16,8 @@ const (
 	WAIT     = "WAIT"
 
 	CONFIG = "CONFIG"
+
+	TYPE = "TYPE"
 )
 
 type RedisCommand struct {
