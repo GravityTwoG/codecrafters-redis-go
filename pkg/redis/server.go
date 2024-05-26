@@ -304,7 +304,7 @@ func (r *redisServer) handleKEYS(writer *bufio.Writer, command *protocol.RedisCo
 		return
 	}
 
-	if command.Parameters[0] != "*" {
+	if command.Parameters[0] != "*" && command.Parameters[0] != "\"*\"" {
 		protocol.WriteError(writer, "ERROR: KEYS. Not supported")
 		return
 	}
