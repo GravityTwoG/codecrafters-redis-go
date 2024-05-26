@@ -21,15 +21,17 @@ const RDB_OPCODE_SELECTDB = 0xFE
 const RDB_OPCODE_EOF = 0xFF
 
 // first 2 bits
-const RDB_LEN_6BIT = 0b00
-const RDB_LEN_14BIT = 0b01
-const RDB_LEN_32BIT = 0b10
-const RDB_SPECIAL = 0b11
+const RDB_LEN_ENC_6BIT = 0b00
+const RDB_LEN_ENC_14BIT = 0b01
+const RDB_LEN_ENC_32BIT = 0b10
+const RDB_ENC_SPECIAL = 0b11
 
 // last 6 bits
-const RDB_S_8BIT = 0b000000
-const RDB_S_128BIT = 0b000010
-const RDB_S_COMPRESSED = 0b000011
+// Integer as string
+const RDB_SPECIAL_INTS_8BIT = 0b000000
+const RDB_SPECIAL_INTS_16BIT = 0b000001
+const RDB_SPECIAL_INTS_32BIT = 0b000010
+const RDB_SPECIAL_S_COMPRESSED = 0b000011
 
 var ErrUnsupportedType = errors.New("unsupported-type")
 
@@ -252,10 +254,6 @@ func parseExpiryTime(reader *bufio.Reader) (*time.Time, error) {
 			return nil, err
 		}
 
-		fmt.Println("now: ", time.Now().UnixMilli())
-		fmt.Println("ms: ", ms)
-		fmt.Println(time.UnixMilli(ms))
-
 		t := time.UnixMilli(ms)
 		return &t, nil
 	}
@@ -284,7 +282,7 @@ func parseString(reader *bufio.Reader) (string, error) {
 
 	valueType = firstTwoBits(valueType)
 
-	if valueType != RDB_SPECIAL {
+	if valueType != RDB_ENC_SPECIAL {
 		len, err := parseLen(reader)
 		if err != nil {
 			return "", err
@@ -308,26 +306,32 @@ func parseSpecialValue(reader *bufio.Reader) (string, error) {
 		return "", err
 	}
 	valueType = lastSixBits(valueType)
-	fmt.Println("Value type: ", valueType)
 
-	if valueType == RDB_S_8BIT {
+	if valueType == RDB_SPECIAL_INTS_8BIT {
 		b, err := reader.ReadByte()
 		if err != nil {
 			return "", err
 		}
-		return string([]byte{b}), nil
+		return fmt.Sprintf("%d", b), nil
 	}
 
-	if valueType == RDB_S_128BIT {
-		q := make([]byte, 4)
-		n, err := reader.Read(q)
-		if n < 4 {
+	if valueType == RDB_SPECIAL_INTS_16BIT {
+		value, err := readInt16(reader)
+		if err != nil {
 			return "", err
 		}
-		return string(q), nil
+		return fmt.Sprintf("%d", value), nil
 	}
 
-	if valueType == RDB_S_COMPRESSED {
+	if valueType == RDB_SPECIAL_INTS_32BIT {
+		value, err := readInt32(reader)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%d", value), nil
+	}
+
+	if valueType == RDB_SPECIAL_S_COMPRESSED {
 		compressedLen, err := parseLen(reader)
 		if err != nil {
 			return "", err
@@ -347,10 +351,10 @@ func parseSpecialValue(reader *bufio.Reader) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if uncompressedLen != len(uncompressed) {
+		if uncompressedLen < len(uncompressed) {
 			return "", errors.New("invalid length")
 		}
-		return string(uncompressed), nil
+		return string(uncompressed[:uncompressedLen]), nil
 	}
 
 	return "", ErrUnsupportedType
@@ -364,12 +368,12 @@ func parseLen(reader *bufio.Reader) (int, error) {
 	}
 
 	first2Bits := firstTwoBits(b)
-	if first2Bits == RDB_LEN_6BIT {
+	if first2Bits == RDB_LEN_ENC_6BIT {
 		// next 6 bits represents length
 		return int(b), nil
 	}
 
-	if first2Bits == RDB_LEN_14BIT {
+	if first2Bits == RDB_LEN_ENC_14BIT {
 		// next 14 bits represents length
 		nextB, err := reader.ReadByte()
 		if err != nil {
@@ -378,12 +382,11 @@ func parseLen(reader *bufio.Reader) (int, error) {
 		return int(b)<<8 | int(nextB), nil
 	}
 
-	if first2Bits == RDB_LEN_32BIT {
+	if first2Bits == RDB_LEN_ENC_32BIT {
 		// Discard the remaining 6 bits. The next 4 bytes from the stream represent the length
 		return readInt32(reader)
 	}
 
 	reader.UnreadByte()
-	fmt.Println("Unsupported first 2 bits: ", first2Bits)
-	return -1, errors.New("unsupported format")
+	return -1, errors.New("special-format")
 }
