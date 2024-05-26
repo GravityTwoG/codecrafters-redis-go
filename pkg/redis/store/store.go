@@ -11,6 +11,9 @@ import (
 	persistence "github.com/codecrafters-io/redis-starter-go/pkg/redis/persistence"
 )
 
+var ErrNotFound = errors.New("not-found")
+var ErrExpired = errors.New("expired")
+
 type RedisStore struct {
 	mutex *sync.Mutex
 	store map[string]redisvalue.RedisValue
@@ -68,12 +71,12 @@ func (s *RedisStore) Get(key string) (string, bool, error) {
 
 	if !ok {
 		fmt.Printf("GET key: %s NOT_FOUND\n", key)
-		return "", false, errors.New("NOT_FOUND")
+		return "", false, ErrNotFound
 	}
 
 	if value.ExpiresAt != nil && time.Now().After(*value.ExpiresAt) {
 		fmt.Printf("GET key: %s EXPIRED\n", key)
-		return "", false, errors.New("EXPIRED")
+		return "", false, ErrExpired
 	}
 
 	fmt.Printf("GET key: %s, value: %s\n", key, value.Value)

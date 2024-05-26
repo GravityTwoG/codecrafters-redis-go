@@ -2,6 +2,7 @@ package redis
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -219,7 +220,7 @@ func (r *redisServer) handleGET(writer *bufio.Writer, command *protocol.RedisCom
 	key := command.Parameters[0]
 	value, ok, err := r.store.Get(key)
 	if err != nil {
-		if err.Error() == "EXPIRED" {
+		if errors.Is(err, redisstore.ErrExpired) {
 			protocol.WriteNullBulkString(writer)
 		} else {
 			protocol.WriteError(writer, err.Error())
@@ -323,12 +324,7 @@ func (r *redisServer) handleTYPE(writer *bufio.Writer, command *protocol.RedisCo
 
 	key := command.Parameters[0]
 	_, ok, err := r.store.Get(key)
-	if err != nil {
-		protocol.WriteError(writer, err.Error())
-		return
-	}
-
-	if !ok {
+	if err != nil || !ok {
 		protocol.WriteSimpleString(writer, "none")
 		return
 	}
