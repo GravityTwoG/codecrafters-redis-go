@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 const SIMPLE_STRING_SPECIFIER = '+'
@@ -115,7 +116,7 @@ func ParseCommand(reader *bufio.Reader) *RedisCommand {
 	fmt.Printf("Command parsed\n")
 
 	return &RedisCommand{
-		Name:       command[0],
+		Name:       strings.ToUpper(command[0]),
 		Parameters: command[1:],
 	}
 }
