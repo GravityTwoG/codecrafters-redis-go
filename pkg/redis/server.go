@@ -101,6 +101,7 @@ func (r *redisServer) Start() {
 
 func (r *redisServer) Stop() {
 	r.isRunning = false
+	r.slave.Stop()
 	r.wg.Wait()
 }
 
@@ -190,7 +191,11 @@ func (r *redisServer) handleCommand(writer *bufio.Writer, command *protocol.Redi
 
 func (r *redisServer) handleSET(writer *bufio.Writer, command *protocol.RedisCommand) {
 	if r.master != nil {
-		go r.master.SendSET(command)
+		r.wg.Add(1)
+		go func() {
+			defer r.wg.Done()
+			r.master.SendSET(command)
+		}()
 	}
 
 	// SET foo bar

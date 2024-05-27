@@ -20,6 +20,8 @@ type Slave struct {
 	replicationOffset int
 
 	store *redisstore.RedisStore
+
+	isRunning bool
 }
 
 func NewSlave(store *redisstore.RedisStore, port string, replicaOf string) *Slave {
@@ -29,6 +31,8 @@ func NewSlave(store *redisstore.RedisStore, port string, replicaOf string) *Slav
 		replicationOffset: 0,
 
 		store: store,
+
+		isRunning: false,
 	}
 }
 
@@ -39,6 +43,7 @@ func (s *Slave) SetupReplication() {
 		fmt.Println("SLAVE: Error connecting to master: ", err.Error())
 		return
 	}
+	defer conn.Close()
 
 	countingReader := &utils.CountingReader{
 		Reader: conn,
@@ -77,7 +82,8 @@ func (s *Slave) SetupReplication() {
 	s.replicationOffset = 0
 	readBefore := countingReader.N - reader.Buffered()
 	// Handle commands from master
-	for {
+	s.isRunning = true
+	for s.isRunning {
 		command := protocol.ParseCommand(reader)
 		if command == nil {
 			break
@@ -96,6 +102,11 @@ func (s *Slave) SetupReplication() {
 
 		fmt.Printf("Slave replication offset: %d\n", s.replicationOffset)
 	}
+
+}
+
+func (s *Slave) Stop() {
+	s.isRunning = false
 }
 
 func (s *Slave) sendPING(reader *bufio.Reader, writer *bufio.Writer) error {

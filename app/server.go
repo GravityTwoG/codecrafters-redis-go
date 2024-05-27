@@ -2,7 +2,11 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	redis "github.com/codecrafters-io/redis-starter-go/pkg/redis"
 )
@@ -24,5 +28,16 @@ func main() {
 	config.ReplicaOf = strings.Replace(config.ReplicaOf, " ", ":", -1)
 
 	redisstore := redis.NewRedisServer(&config)
+
+	// graceful shutdown
+	go func() {
+		exit := make(chan os.Signal, 1) // we need to reserve to buffer size 1, so the notifier are not blocked
+		signal.Notify(exit, os.Interrupt, syscall.SIGTERM)
+
+		<-exit
+		fmt.Println("Shutting down...")
+		redisstore.Stop()
+	}()
+
 	redisstore.Start()
 }
