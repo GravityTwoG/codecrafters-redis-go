@@ -63,13 +63,6 @@ func NewRedisServer(config *RedisConfig) *redisServer {
 }
 
 func (r *redisServer) Start() {
-	l, err := net.Listen("tcp", fmt.Sprintf("%s:%s", r.host, r.port))
-	if err != nil {
-		fmt.Printf("Failed to bind to port %s: %s\n", r.port, err.Error())
-		os.Exit(1)
-	}
-	defer l.Close()
-
 	wg := &sync.WaitGroup{}
 	if r.role == "slave" {
 		wg.Add(1)
@@ -78,6 +71,13 @@ func (r *redisServer) Start() {
 			r.slave.SetupReplication()
 		}()
 	}
+
+	l, err := net.Listen("tcp", fmt.Sprintf("%s:%s", r.host, r.port))
+	if err != nil {
+		fmt.Printf("Failed to bind to port %s: %s\n", r.port, err.Error())
+		os.Exit(1)
+	}
+	defer l.Close()
 
 	for {
 		conn, err := l.Accept()
