@@ -6,6 +6,7 @@ const (
 
 	SET  = "SET"
 	GET  = "GET"
+	DEL  = "DEL"
 	KEYS = "KEYS"
 
 	PSYNC = "PSYNC"

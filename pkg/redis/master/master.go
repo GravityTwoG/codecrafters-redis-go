@@ -285,6 +285,6 @@ func (m *Master) HandleWAIT(writer *bufio.Writer, command *protocol.RedisCommand
 
 	timeout := time.Duration(timeoutMs) * time.Millisecond
 	acks := m.SendGETACK(replicas, timeout)
-	protocol.WriteInteger(writer, fmt.Sprintf("%d", acks))
+	protocol.WriteInteger(writer, acks)
 	fmt.Printf("Received ACKS: %d\n", acks)
 }

@@ -142,6 +142,9 @@ func (r *redisServer) handleCommand(writer *bufio.Writer, command *protocol.Redi
 	case protocol.GET:
 		r.handleGET(writer, command)
 
+	case protocol.DEL:
+		r.handleDEL(writer, command)
+
 	case protocol.KEYS:
 		r.handleKEYS(writer, command)
 
@@ -234,6 +237,16 @@ func (r *redisServer) handleGET(writer *bufio.Writer, command *protocol.RedisCom
 	}
 
 	protocol.WriteBulkString(writer, value)
+}
+
+func (r *redisServer) handleDEL(writer *bufio.Writer, command *protocol.RedisCommand) {
+	if len(command.Parameters) < 1 {
+		protocol.WriteError(writer, "ERROR: Wrong number of arguments")
+		return
+	}
+
+	deleted := r.store.Delete(command.Parameters)
+	protocol.WriteInteger(writer, deleted)
 }
 
 func (r *redisServer) handleINFO(writer *bufio.Writer, command *protocol.RedisCommand) {

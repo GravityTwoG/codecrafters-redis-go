@@ -86,6 +86,23 @@ func (s *RedisStore) Get(key string) (string, bool, error) {
 	return value.Value, ok, nil
 }
 
+func (s *RedisStore) Delete(keys []string) int {
+	fmt.Printf("DEL keys: %s\n", keys)
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	deleted := 0
+	for _, key := range keys {
+		_, ok := s.store[key]
+		if ok {
+			deleted++
+		}
+		delete(s.store, key)
+	}
+
+	return deleted
+}
+
 func (s *RedisStore) Keys() []string {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()

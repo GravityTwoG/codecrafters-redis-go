@@ -39,8 +39,8 @@ func WriteBulkStringArray(writer *bufio.Writer, strs []string) {
 	}
 }
 
-func WriteInteger(writer *bufio.Writer, str string) {
-	writer.Write([]byte(fmt.Sprintf("%c%s\r\n", INTEGER_SPECIFIER, str)))
+func WriteInteger(writer *bufio.Writer, val int) {
+	writer.Write([]byte(fmt.Sprintf("%c%d\r\n", INTEGER_SPECIFIER, val)))
 }
 
 func WriteError(writer *bufio.Writer, str string) {
