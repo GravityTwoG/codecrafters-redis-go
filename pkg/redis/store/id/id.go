@@ -2,8 +2,10 @@ package entry_id
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var ErrInvalidID = errors.New("invalid-id")
@@ -72,4 +74,46 @@ func AreIDsIncreasing(id1 string, id2 string) bool {
 	}
 
 	return false
+}
+
+func GenerateID(currentId string, prevId string) string {
+	msTime, _, err := ParseID(currentId)
+
+	if prevId == "" {
+		if err == ErrGenerateSeqNum {
+			seqNum := 0
+			if msTime == 0 {
+				seqNum = 1
+			}
+			return fmt.Sprintf("%d-%d", msTime, seqNum)
+		} else if err == ErrGenerateID {
+			msTime = int(time.Now().UnixMilli())
+			return fmt.Sprintf("%d-%d", msTime, 0)
+		}
+
+		return ""
+	}
+
+	if err == ErrGenerateSeqNum {
+
+		prevMsTime, prevSeqNum, _ := ParseID(prevId)
+		seqNum := prevSeqNum + 1
+		if msTime > prevMsTime {
+			seqNum = 0
+		}
+		return fmt.Sprintf("%d-%d", msTime, seqNum)
+
+	} else if err == ErrGenerateID {
+
+		prevMsTime, prevSeqNum, _ := ParseID(prevId)
+		msTime = int(time.Now().UnixMilli())
+		seqNum := prevSeqNum
+		if msTime == prevMsTime {
+			seqNum += 1
+		}
+		return fmt.Sprintf("%d-%d", msTime, seqNum)
+
+	}
+
+	return ""
 }
