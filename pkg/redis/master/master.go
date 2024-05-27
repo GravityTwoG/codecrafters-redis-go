@@ -22,7 +22,7 @@ type _Replica struct {
 }
 
 type Master struct {
-	mutex             *sync.Mutex
+	mutex             *sync.RWMutex
 	replicationId     string
 	replicationOffset int
 
@@ -32,7 +32,7 @@ type Master struct {
 
 func NewMaster() *Master {
 	return &Master{
-		mutex:             &sync.Mutex{},
+		mutex:             &sync.RWMutex{},
 		replicationId:     utils.RandString(40),
 		replicationOffset: 0,
 
@@ -42,20 +42,20 @@ func NewMaster() *Master {
 }
 
 func (m *Master) ReplicationId() string {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
 	return m.replicationId
 }
 
 func (m *Master) ReplicationOffset() int {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
 	return m.replicationOffset
 }
 
 func (m *Master) ConnectedReplicasCount() int {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
 	return len(m.connectedReplicas)
 }
 
@@ -232,6 +232,9 @@ func (m *Master) HandleREPLCONF(
 	}
 
 	if strings.ToUpper(command.Parameters[0]) == "LISTENING-PORT" {
+		m.mutex.Lock()
+		defer m.mutex.Unlock()
+
 		slavePort := command.Parameters[1]
 		m.slavePorts = append(m.slavePorts, slavePort)
 		protocol.WriteSimpleString(writer, "OK")

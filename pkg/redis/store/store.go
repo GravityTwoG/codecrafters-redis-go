@@ -21,10 +21,10 @@ type StreamEntry struct {
 }
 
 type RedisStore struct {
-	storeMut *sync.Mutex
+	storeMut *sync.RWMutex
 	store    map[string]redisvalue.RedisValue
 
-	streamsMut *sync.Mutex
+	streamsMut *sync.RWMutex
 	streams    map[string][]StreamEntry
 }
 
@@ -41,10 +41,10 @@ func NewRedisStore(dir string, dbfilename string) *RedisStore {
 	}
 
 	return &RedisStore{
-		storeMut: &sync.Mutex{},
+		storeMut: &sync.RWMutex{},
 		store:    store,
 
-		streamsMut: &sync.Mutex{},
+		streamsMut: &sync.RWMutex{},
 		streams:    make(map[string][]StreamEntry),
 	}
 }
@@ -79,8 +79,8 @@ func (s *RedisStore) SetWithTTL(
 
 func (s *RedisStore) Get(key string) (string, bool, error) {
 	fmt.Printf("GET key: %s\n", key)
-	s.storeMut.Lock()
-	defer s.storeMut.Unlock()
+	s.storeMut.RLock()
+	defer s.storeMut.RUnlock()
 
 	value, ok := s.store[key]
 
@@ -116,8 +116,8 @@ func (s *RedisStore) Delete(keys []string) int {
 }
 
 func (s *RedisStore) Keys() []string {
-	s.storeMut.Lock()
-	defer s.storeMut.Unlock()
+	s.storeMut.RLock()
+	defer s.storeMut.RUnlock()
 
 	keys := make([]string, 0, len(s.store))
 
@@ -177,8 +177,8 @@ func (s *RedisStore) AppendToStream(key string, id string, values []string) (str
 }
 
 func (s *RedisStore) GetStream(key string) ([]StreamEntry, bool) {
-	s.streamsMut.Lock()
-	defer s.streamsMut.Unlock()
+	s.streamsMut.RLock()
+	defer s.streamsMut.RUnlock()
 
 	values, ok := s.streams[key]
 	if !ok {
