@@ -14,9 +14,17 @@ import (
 var ErrNotFound = errors.New("not-found")
 var ErrExpired = errors.New("expired")
 
+type StreamEntry struct {
+	ID     string
+	Values []string
+}
+
 type RedisStore struct {
-	mutex *sync.Mutex
-	store map[string]redisvalue.RedisValue
+	storeMut *sync.Mutex
+	store    map[string]redisvalue.RedisValue
+
+	streamsMut *sync.Mutex
+	streams    map[string][]StreamEntry
 }
 
 func NewRedisStore(dir string, dbfilename string) *RedisStore {
@@ -32,15 +40,18 @@ func NewRedisStore(dir string, dbfilename string) *RedisStore {
 	}
 
 	return &RedisStore{
-		mutex: &sync.Mutex{},
-		store: store,
+		storeMut: &sync.Mutex{},
+		store:    store,
+
+		streamsMut: &sync.Mutex{},
+		streams:    make(map[string][]StreamEntry),
 	}
 }
 
 func (s *RedisStore) Set(key string, value string) {
 	fmt.Printf("SET key: %s, value: %s\n", key, value)
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.storeMut.Lock()
+	defer s.storeMut.Unlock()
 
 	s.store[key] = redisvalue.RedisValue{
 		Value:     value,
@@ -55,8 +66,8 @@ func (s *RedisStore) SetWithTTL(
 		"SET key: %s, value: %s, duration: %s\n",
 		key, value, duration.String(),
 	)
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.storeMut.Lock()
+	defer s.storeMut.Unlock()
 
 	expiresAt := time.Now().Add(duration)
 	s.store[key] = redisvalue.RedisValue{
@@ -67,8 +78,8 @@ func (s *RedisStore) SetWithTTL(
 
 func (s *RedisStore) Get(key string) (string, bool, error) {
 	fmt.Printf("GET key: %s\n", key)
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.storeMut.Lock()
+	defer s.storeMut.Unlock()
 
 	value, ok := s.store[key]
 
@@ -83,13 +94,13 @@ func (s *RedisStore) Get(key string) (string, bool, error) {
 	}
 
 	fmt.Printf("GET key: %s, value: %s\n", key, value.Value)
-	return value.Value, ok, nil
+	return value.Value, true, nil
 }
 
 func (s *RedisStore) Delete(keys []string) int {
 	fmt.Printf("DEL keys: %s\n", keys)
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.storeMut.Lock()
+	defer s.storeMut.Unlock()
 
 	deleted := 0
 	for _, key := range keys {
@@ -104,8 +115,8 @@ func (s *RedisStore) Delete(keys []string) int {
 }
 
 func (s *RedisStore) Keys() []string {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
+	s.storeMut.Lock()
+	defer s.storeMut.Unlock()
 
 	keys := make([]string, 0, len(s.store))
 
@@ -114,4 +125,36 @@ func (s *RedisStore) Keys() []string {
 	}
 
 	return keys
+}
+
+func (s *RedisStore) AppendToStream(key string, id string, values []string) {
+	s.streamsMut.Lock()
+	defer s.streamsMut.Unlock()
+
+	stream, ok := s.streams[key]
+	if ok {
+		s.streams[key] = append(stream, StreamEntry{
+			ID:     id,
+			Values: values,
+		})
+		return
+	}
+
+	entry := StreamEntry{
+		ID:     id,
+		Values: values,
+	}
+	s.streams[key] = []StreamEntry{entry}
+}
+
+func (s *RedisStore) GetStream(key string) ([]StreamEntry, bool) {
+	s.streamsMut.Lock()
+	defer s.streamsMut.Unlock()
+
+	values, ok := s.streams[key]
+	if !ok {
+		return nil, false
+	}
+
+	return values, true
 }

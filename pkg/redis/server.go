@@ -148,6 +148,9 @@ func (r *redisServer) handleCommand(writer *bufio.Writer, command *protocol.Redi
 	case protocol.KEYS:
 		r.handleKEYS(writer, command)
 
+	case protocol.XADD:
+		r.handleXADD(writer, command)
+
 	case protocol.INFO:
 		r.handleINFO(writer, command)
 
@@ -249,6 +252,34 @@ func (r *redisServer) handleDEL(writer *bufio.Writer, command *protocol.RedisCom
 	protocol.WriteInteger(writer, deleted)
 }
 
+func (r *redisServer) handleKEYS(writer *bufio.Writer, command *protocol.RedisCommand) {
+	if len(command.Parameters) != 1 {
+		protocol.WriteError(writer, "ERROR: KEYS. Invalid number of parameters")
+		return
+	}
+
+	if command.Parameters[0] != "*" && command.Parameters[0] != "\"*\"" {
+		protocol.WriteError(writer, "ERROR: KEYS. Not supported")
+		return
+	}
+
+	protocol.WriteBulkStringArray(writer, r.store.Keys())
+}
+
+func (r *redisServer) handleXADD(writer *bufio.Writer, command *protocol.RedisCommand) {
+	if len(command.Parameters) < 2 {
+		protocol.WriteError(writer, "ERROR: Wrong number of arguments")
+		return
+	}
+
+	key := command.Parameters[0]
+	id := command.Parameters[1]
+	values := command.Parameters[2:]
+	r.store.AppendToStream(key, id, values)
+
+	protocol.WriteBulkString(writer, id)
+}
+
 func (r *redisServer) handleINFO(writer *bufio.Writer, command *protocol.RedisCommand) {
 	if len(command.Parameters) != 1 {
 		protocol.WriteError(writer, "ERROR: INFO. Invalid number of parameters")
@@ -315,20 +346,6 @@ func (r *redisServer) handleCONFIG(
 	protocol.WriteError(writer, "ERROR: CONFIG. Invalid key")
 }
 
-func (r *redisServer) handleKEYS(writer *bufio.Writer, command *protocol.RedisCommand) {
-	if len(command.Parameters) != 1 {
-		protocol.WriteError(writer, "ERROR: KEYS. Invalid number of parameters")
-		return
-	}
-
-	if command.Parameters[0] != "*" && command.Parameters[0] != "\"*\"" {
-		protocol.WriteError(writer, "ERROR: KEYS. Not supported")
-		return
-	}
-
-	protocol.WriteBulkStringArray(writer, r.store.Keys())
-}
-
 func (r *redisServer) handleTYPE(writer *bufio.Writer, command *protocol.RedisCommand) {
 	if len(command.Parameters) != 1 {
 		protocol.WriteError(writer, "ERROR: TYPE. Invalid number of parameters")
@@ -337,10 +354,16 @@ func (r *redisServer) handleTYPE(writer *bufio.Writer, command *protocol.RedisCo
 
 	key := command.Parameters[0]
 	_, ok, err := r.store.Get(key)
-	if err != nil || !ok {
-		protocol.WriteSimpleString(writer, "none")
+	if err == nil && ok {
+		protocol.WriteSimpleString(writer, "string")
 		return
 	}
 
-	protocol.WriteSimpleString(writer, "string")
+	_, ok = r.store.GetStream(key)
+	if ok {
+		protocol.WriteSimpleString(writer, "stream")
+		return
+	}
+
+	protocol.WriteSimpleString(writer, "none")
 }
