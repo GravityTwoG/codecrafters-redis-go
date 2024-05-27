@@ -7,6 +7,7 @@ import (
 	"time"
 
 	redisvalue "github.com/codecrafters-io/redis-starter-go/pkg/redis/redis-value"
+	entry_id "github.com/codecrafters-io/redis-starter-go/pkg/redis/store/id"
 
 	persistence "github.com/codecrafters-io/redis-starter-go/pkg/redis/persistence"
 )
@@ -127,17 +128,29 @@ func (s *RedisStore) Keys() []string {
 	return keys
 }
 
-func (s *RedisStore) AppendToStream(key string, id string, values []string) {
+func (s *RedisStore) AppendToStream(key string, id string, values []string) error {
 	s.streamsMut.Lock()
 	defer s.streamsMut.Unlock()
 
+	_, _, err := entry_id.ParseID(id)
+	if err != nil {
+		return err
+	}
+
 	stream, ok := s.streams[key]
 	if ok {
+		if len(stream) > 0 {
+			prevEntry := stream[len(stream)-1]
+			if !entry_id.AreIDsIncreasing(prevEntry.ID, id) {
+				return entry_id.ErrIDsNotIncreasing
+			}
+		}
+
 		s.streams[key] = append(stream, StreamEntry{
 			ID:     id,
 			Values: values,
 		})
-		return
+		return nil
 	}
 
 	entry := StreamEntry{
@@ -145,6 +158,8 @@ func (s *RedisStore) AppendToStream(key string, id string, values []string) {
 		Values: values,
 	}
 	s.streams[key] = []StreamEntry{entry}
+
+	return nil
 }
 
 func (s *RedisStore) GetStream(key string) ([]StreamEntry, bool) {
