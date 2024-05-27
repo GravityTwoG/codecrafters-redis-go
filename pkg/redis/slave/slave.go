@@ -72,8 +72,7 @@ func (s *Slave) SetupReplication() {
 	fmt.Printf("SLAVE: RDB FILE length: %d\n", rdbFileLen)
 	reader.Discard(rdbFileLen)
 
-	fmt.Printf("SLAVE: RDB FILE received\n")
-	fmt.Printf("SLAVE: connected to master\n")
+	fmt.Printf("SLAVE: RDB FILE received, waiting for commands from master\n")
 
 	s.replicationOffset = 0
 	readBefore := countingReader.N - reader.Buffered()

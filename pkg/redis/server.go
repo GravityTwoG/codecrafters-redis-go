@@ -25,7 +25,9 @@ type redisServer struct {
 	dir        string
 	dbfilename string
 
-	role string
+	isRunning bool
+	wg        *sync.WaitGroup
+	role      string
 
 	master *master.Master
 	slave  *slave.Slave
@@ -53,7 +55,9 @@ func NewRedisServer(config *RedisConfig) *redisServer {
 		dir:        config.Dir,
 		dbfilename: config.DBFilename,
 
-		role: role,
+		isRunning: false,
+		wg:        &sync.WaitGroup{},
+		role:      role,
 
 		master: m,
 		slave:  s,
@@ -63,11 +67,10 @@ func NewRedisServer(config *RedisConfig) *redisServer {
 }
 
 func (r *redisServer) Start() {
-	wg := &sync.WaitGroup{}
 	if r.role == "slave" {
-		wg.Add(1)
+		r.wg.Add(1)
 		go func() {
-			defer wg.Done()
+			defer r.wg.Done()
 			r.slave.SetupReplication()
 		}()
 	}
@@ -79,20 +82,26 @@ func (r *redisServer) Start() {
 	}
 	defer l.Close()
 
-	for {
+	r.isRunning = true
+	for r.isRunning {
 		conn, err := l.Accept()
 		if err != nil {
 			fmt.Println("Error accepting connection: ", err.Error())
-			break
+			continue
 		}
-		wg.Add(1)
+		r.wg.Add(1)
 		go func() {
-			defer wg.Done()
+			defer r.wg.Done()
 			r.handleConnection(conn)
 		}()
 	}
 
-	wg.Wait()
+	r.wg.Wait()
+}
+
+func (r *redisServer) Stop() {
+	r.isRunning = false
+	r.wg.Wait()
 }
 
 func (r *redisServer) handleConnection(conn net.Conn) {
