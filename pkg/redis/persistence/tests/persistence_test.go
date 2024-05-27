@@ -8,11 +8,9 @@ import (
 )
 
 func TestParseRDBFile(t *testing.T) {
-	store := persistence.ParseRDBFile("./", "dump.rdb")
-
-	if store == nil {
-		t.Fatal("Error parsing RDB file")
-		return
+	store, err := persistence.ParseRDBFile("./", "dump.rdb")
+	if err != nil {
+		t.Fatal("Error parsing RDB file: ", err.Error())
 	}
 	fmt.Println(store)
 }

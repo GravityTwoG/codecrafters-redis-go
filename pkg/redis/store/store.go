@@ -22,7 +22,10 @@ type RedisStore struct {
 func NewRedisStore(dir string, dbfilename string) *RedisStore {
 	store := make(map[string]redisvalue.RedisValue)
 	if dir != "" && dbfilename != "" {
-		st := persistence.ParseRDBFile(dir, dbfilename)
+		st, err := persistence.ParseRDBFile(dir, dbfilename)
+		if err != nil {
+			fmt.Println("Error parsing RDB file: ", err.Error())
+		}
 		if st != nil {
 			store = st
 		}

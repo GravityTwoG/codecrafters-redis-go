@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"time"
@@ -20,9 +21,9 @@ const RDB_OPCODE_SELECTDB = 0xFE
 const RDB_OPCODE_EOF = 0xFF
 
 // first 2 bits
-const RDB_LEN_ENC_6BIT = 0b00
-const RDB_LEN_ENC_14BIT = 0b01
-const RDB_LEN_ENC_32BIT = 0b10
+const RDB_ENC_6BIT = 0b00
+const RDB_ENC_14BIT = 0b01
+const RDB_ENC_32BIT = 0b10
 const RDB_ENC_SPECIAL = 0b11
 
 // last 6 bits
@@ -60,17 +61,18 @@ const RDB_VALUE_TYPE_HMZLIST = 13
 // List in quicklist
 const RDB_VALUE_TYPE_LQLIST = 14
 
+var ErrUnknownOpcode = errors.New("unknown-opcode")
 var ErrUnsupportedType = errors.New("unsupported-type")
 
-func ParseRDBFile(dir string, dbfilename string) map[string]redis_value.RedisValue {
+func ParseRDBFile(dir string, dbfilename string) (map[string]redis_value.RedisValue, error) {
 	file, err := os.Open(path.Join(dir, dbfilename))
 	if errors.Is(err, os.ErrNotExist) {
 		fmt.Println("File not found: ", err.Error())
-		return nil
+		return nil, err
 	}
 	if err != nil {
 		fmt.Println("Error opening file: ", err.Error())
-		return nil
+		return nil, err
 	}
 	defer file.Close()
 
@@ -78,12 +80,12 @@ func ParseRDBFile(dir string, dbfilename string) map[string]redis_value.RedisVal
 	err = verifyMagic(reader)
 	if err != nil {
 		fmt.Println("Error verifying magic: ", err.Error())
-		return nil
+		return nil, err
 	}
 	err = verifyVersion(reader)
 	if err != nil {
 		fmt.Println("Error verifying version: ", err.Error())
-		return nil
+		return nil, err
 	}
 
 	dbNumber := 0
@@ -94,7 +96,7 @@ func ParseRDBFile(dir string, dbfilename string) map[string]redis_value.RedisVal
 		opcode, err := reader.ReadByte()
 		if err != nil {
 			fmt.Println("Error reading opcode: ", err.Error())
-			return nil
+			return nil, err
 		}
 
 		switch opcode {
@@ -102,12 +104,12 @@ func ParseRDBFile(dir string, dbfilename string) map[string]redis_value.RedisVal
 			key, err := parseString(reader)
 			if err != nil {
 				fmt.Println("Error parsing key: ", err.Error())
-				return nil
+				return nil, err
 			}
 			value, err := parseString(reader)
 			if err != nil {
 				fmt.Println("Error parsing value: ", err.Error())
-				return nil
+				return nil, err
 			}
 			fmt.Printf("%s: %s\n", key, value)
 
@@ -115,7 +117,7 @@ func ParseRDBFile(dir string, dbfilename string) map[string]redis_value.RedisVal
 			dbNumber, err = parseLen(reader)
 			if err != nil {
 				fmt.Println("Error parsing dbNumber: ", err.Error())
-				return nil
+				return nil, err
 			}
 			fmt.Println("dbNumber: ", dbNumber)
 
@@ -123,32 +125,32 @@ func ParseRDBFile(dir string, dbfilename string) map[string]redis_value.RedisVal
 			hashTableSize, err = parseLen(reader)
 			if err != nil {
 				fmt.Println("Error parsing len: ", err.Error())
-				return nil
+				return nil, err
 			}
 			fmt.Println("hashTableSize: ", hashTableSize)
 
 			expireHashTableSize, err = parseLen(reader)
 			if err != nil {
 				fmt.Println("Error parsing len: ", err.Error())
-				return nil
+				return nil, err
 			}
 			fmt.Println("expireHashTableSize: ", expireHashTableSize)
 
 			store, err := parseDB(reader)
 			if err != nil {
 				fmt.Println("Error parsing db: ", err.Error())
-				return nil
+				return nil, err
 			}
-			return store
+			return store, nil
 
 		case RDB_OPCODE_EOF:
 			fmt.Println("EOF")
-			return nil
+			return nil, io.EOF
 
 		default:
 			reader.UnreadByte()
 			fmt.Println("Unknown opcode: ", opcode)
-			return nil
+			return nil, ErrUnknownOpcode
 		}
 	}
 }
@@ -371,12 +373,12 @@ func parseLen(reader *bufio.Reader) (int, error) {
 	}
 
 	first2Bits := firstTwoBits(b)
-	if first2Bits == RDB_LEN_ENC_6BIT {
+	if first2Bits == RDB_ENC_6BIT {
 		// next 6 bits represents length
 		return int(b), nil
 	}
 
-	if first2Bits == RDB_LEN_ENC_14BIT {
+	if first2Bits == RDB_ENC_14BIT {
 		// next 14 bits represents length
 		nextB, err := reader.ReadByte()
 		if err != nil {
@@ -385,7 +387,7 @@ func parseLen(reader *bufio.Reader) (int, error) {
 		return int(b)<<8 | int(nextB), nil
 	}
 
-	if first2Bits == RDB_LEN_ENC_32BIT {
+	if first2Bits == RDB_ENC_32BIT {
 		// Discard the remaining 6 bits. The next 4 bytes from the stream represent the length
 		return readInt32(reader)
 	}
