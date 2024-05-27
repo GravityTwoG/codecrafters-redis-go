@@ -74,6 +74,28 @@ func TestParseID(t *testing.T) {
 		assert.Equal(t, -1, msTime)
 		assert.Equal(t, -1, seqNum)
 	})
+
+	t.Run("generate SeqNum", func(t *testing.T) {
+		t.Parallel()
+
+		id := "12-*"
+		msTime, seqNum, err := entry_id.ParseID(id)
+
+		assert.Equal(t, err, entry_id.ErrGenerateSeqNum)
+		assert.Equal(t, 12, msTime)
+		assert.Equal(t, -1, seqNum)
+	})
+
+	t.Run("generate ID", func(t *testing.T) {
+		t.Parallel()
+
+		id := "*"
+		msTime, seqNum, err := entry_id.ParseID(id)
+
+		assert.Equal(t, err, entry_id.ErrGenerateID)
+		assert.Equal(t, -1, msTime)
+		assert.Equal(t, -1, seqNum)
+	})
 }
 
 func TestAreIDsIncreasing(t *testing.T) {

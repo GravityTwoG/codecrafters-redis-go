@@ -10,7 +10,14 @@ var ErrInvalidID = errors.New("invalid-id")
 var ErrIDLessThanMinimum = errors.New("ERR The ID specified in XADD must be greater than 0-0")
 var ErrIDsNotIncreasing = errors.New("ERR The ID specified in XADD is equal or smaller than the target stream top item")
 
+var ErrGenerateSeqNum = errors.New("generate-seq-num")
+var ErrGenerateID = errors.New("generate-id")
+
 func ParseID(id string) (int, int, error) {
+	if id == "*" {
+		return -1, -1, ErrGenerateID
+	}
+
 	delimeterIdx := strings.Index(id, "-")
 	if delimeterIdx == -1 {
 		return -1, -1, ErrInvalidID
@@ -26,6 +33,9 @@ func ParseID(id string) (int, int, error) {
 	}
 
 	seqNumStr := id[delimeterIdx+1:]
+	if seqNumStr == "*" {
+		return msTime, -1, ErrGenerateSeqNum
+	}
 	if seqNumStr == "" {
 		return -1, -1, ErrInvalidID
 	}

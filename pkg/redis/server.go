@@ -284,7 +284,7 @@ func (r *redisServer) handleXADD(writer *bufio.Writer, command *protocol.RedisCo
 	key := command.Parameters[0]
 	id := command.Parameters[1]
 	values := command.Parameters[2:]
-	err := r.store.AppendToStream(key, id, values)
+	id, err := r.store.AppendToStream(key, id, values)
 	if err != nil {
 		protocol.WriteError(writer, err.Error())
 		return

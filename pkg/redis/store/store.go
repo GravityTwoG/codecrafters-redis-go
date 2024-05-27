@@ -128,29 +128,47 @@ func (s *RedisStore) Keys() []string {
 	return keys
 }
 
-func (s *RedisStore) AppendToStream(key string, id string, values []string) error {
+func (s *RedisStore) AppendToStream(key string, id string, values []string) (string, error) {
 	s.streamsMut.Lock()
 	defer s.streamsMut.Unlock()
 
-	_, _, err := entry_id.ParseID(id)
-	if err != nil {
-		return err
-	}
-
 	stream, ok := s.streams[key]
-	if ok {
-		if len(stream) > 0 {
-			prevEntry := stream[len(stream)-1]
-			if !entry_id.AreIDsIncreasing(prevEntry.ID, id) {
-				return entry_id.ErrIDsNotIncreasing
+	if ok && len(stream) > 0 {
+		prevEntry := stream[len(stream)-1]
+
+		msTime, _, err := entry_id.ParseID(id)
+		if err == entry_id.ErrGenerateSeqNum {
+			prevMsTime, prevSeqNum, _ := entry_id.ParseID(prevEntry.ID)
+			seqNum := prevSeqNum + 1
+			if msTime > prevMsTime {
+				seqNum = 0
 			}
+			id = fmt.Sprintf("%d-%d", msTime, seqNum)
+		} else if err == entry_id.ErrGenerateID {
+			prevMsTime, prevSeqNum, _ := entry_id.ParseID(prevEntry.ID)
+			id = fmt.Sprintf("%d-%d", prevMsTime+1, prevSeqNum)
+		} else if err != nil {
+			return "", err
+		}
+
+		if !entry_id.AreIDsIncreasing(prevEntry.ID, id) {
+			return "", entry_id.ErrIDsNotIncreasing
 		}
 
 		s.streams[key] = append(stream, StreamEntry{
 			ID:     id,
 			Values: values,
 		})
-		return nil
+		return id, nil
+	}
+
+	msTime, _, err := entry_id.ParseID(id)
+	if err == entry_id.ErrGenerateSeqNum {
+		id = fmt.Sprintf("%d-%d", msTime, 1)
+	} else if err == entry_id.ErrGenerateID {
+		id = "0-1"
+	} else if err != nil {
+		return "", err
 	}
 
 	entry := StreamEntry{
@@ -159,7 +177,7 @@ func (s *RedisStore) AppendToStream(key string, id string, values []string) erro
 	}
 	s.streams[key] = []StreamEntry{entry}
 
-	return nil
+	return id, nil
 }
 
 func (s *RedisStore) GetStream(key string) ([]StreamEntry, bool) {
