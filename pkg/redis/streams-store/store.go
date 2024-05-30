@@ -4,9 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 
 	entry_id "github.com/codecrafters-io/redis-starter-go/pkg/redis/streams-store/id"
+	"github.com/codecrafters-io/redis-starter-go/pkg/utils"
 )
 
 var ErrNotFound = errors.New("not-found")
@@ -17,19 +19,41 @@ type StreamEntry struct {
 	Values []string
 }
 
-type StreamsStore struct {
-	streamsMut *sync.RWMutex
-	streams    map[string][]StreamEntry
+type Stream = []StreamEntry
+
+type StreamListener struct {
+	key     string
+	startID string
+	endID   string
+	added   chan struct{}
 }
 
-func NewStreamsStore() *StreamsStore {
+type StreamsStore struct {
+	wg         *sync.WaitGroup
+	streamsMut *sync.RWMutex
+	streams    map[string]Stream
+
+	mut             *sync.RWMutex
+	streamListeners []*StreamListener
+}
+
+func NewStreamsStore(wg *sync.WaitGroup) *StreamsStore {
 	return &StreamsStore{
+		wg: wg,
+
 		streamsMut: &sync.RWMutex{},
-		streams:    make(map[string][]StreamEntry),
+		streams:    make(map[string]Stream),
+
+		mut:             &sync.RWMutex{},
+		streamListeners: make([]*StreamListener, 0),
 	}
 }
 
-func (s *StreamsStore) AppendToStream(key string, id string, values []string) (string, error) {
+func (s *StreamsStore) Append(
+	key string,
+	id string,
+	values []string,
+) (string, error) {
 
 	if len(values)%2 != 0 {
 		return "", fmt.Errorf("invalid number of values")
@@ -38,30 +62,47 @@ func (s *StreamsStore) AppendToStream(key string, id string, values []string) (s
 	s.streamsMut.Lock()
 	defer s.streamsMut.Unlock()
 
+	defer func() {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.notifyStreamListeners(key)
+		}()
+	}()
+
 	stream, ok := s.streams[key]
-	if ok && len(stream) > 0 {
-		prevEntry := stream[len(stream)-1]
-
-		parsedID, err := entry_id.ParseID(id)
-		if err == entry_id.ErrGenerateID || err == entry_id.ErrGenerateSeqNum {
-			parsedID = entry_id.GenerateID(id, &prevEntry.ID)
-			if id == "" {
-				return "", entry_id.ErrIDLessThanMinimum
-			}
-		} else if err != nil {
-			return "", err
-		}
-
-		if !parsedID.Greater(&prevEntry.ID) {
-			return "", entry_id.ErrIDsNotIncreasing
-		}
-
-		s.streams[key] = append(stream, StreamEntry{
-			ID:     *parsedID,
-			Values: values,
-		})
-		return parsedID.String(), nil
+	if !ok || len(stream) == 0 {
+		return s.createStream(key, id, values)
 	}
+
+	prevEntry, _ := utils.Last(stream)
+
+	parsedID, err := entry_id.ParseID(id)
+	if err == entry_id.ErrGenerateID || err == entry_id.ErrGenerateSeqNum {
+		parsedID = entry_id.GenerateID(id, &prevEntry.ID)
+		if id == "" {
+			return "", entry_id.ErrIDLessThanMinimum
+		}
+	} else if err != nil {
+		return "", err
+	}
+
+	if !parsedID.Greater(&prevEntry.ID) {
+		return "", entry_id.ErrIDsNotIncreasing
+	}
+
+	s.streams[key] = append(stream, StreamEntry{
+		ID:     *parsedID,
+		Values: values,
+	})
+	return parsedID.String(), nil
+}
+
+func (s *StreamsStore) createStream(
+	key string,
+	id string,
+	values []string,
+) (string, error) {
 
 	parsedID, err := entry_id.ParseID(id)
 	if err == entry_id.ErrGenerateID || err == entry_id.ErrGenerateSeqNum {
@@ -82,7 +123,70 @@ func (s *StreamsStore) AppendToStream(key string, id string, values []string) (s
 	return parsedID.String(), nil
 }
 
-func (s *StreamsStore) GetStream(key string) ([]StreamEntry, bool) {
+func (s *StreamsStore) notifyStreamListeners(key string) {
+	s.mut.RLock()
+	defer s.mut.RUnlock()
+
+	for _, listener := range s.streamListeners {
+		if listener.key != key {
+			continue
+		}
+
+		entries, err := s.RangeExclusive(
+			key,
+			listener.startID,
+			listener.endID,
+		)
+		if err != nil {
+			fmt.Printf("ERROR: %s\n", err.Error())
+			continue
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		listener.added <- struct{}{}
+	}
+}
+
+func (s *StreamsStore) WaitForADD(key, start, end string) {
+	listener := &StreamListener{
+		key:     key,
+		startID: start,
+		endID:   end,
+		added:   make(chan struct{}),
+	}
+	s.mut.Lock()
+	s.streamListeners = append(s.streamListeners, listener)
+	s.mut.Unlock()
+
+	<-listener.added
+	close(listener.added)
+
+	s.mut.Lock()
+	defer s.mut.Unlock()
+
+	idx := slices.Index(s.streamListeners, listener)
+	utils.RemoveIndex(s.streamListeners, idx)
+}
+
+func (s *StreamsStore) ParseStartID(key string, id string) string {
+	if id != "$" {
+		return id
+	}
+
+	startID := "0-1"
+
+	entries, ok := s.Get(key)
+	if ok && len(entries) > 0 {
+		lastEntry, _ := utils.Last(entries)
+		fmt.Printf("StartID: %s\n", lastEntry.ID.String())
+		return lastEntry.ID.String()
+	}
+
+	return startID
+}
+
+func (s *StreamsStore) Get(key string) (Stream, bool) {
 	s.streamsMut.RLock()
 	defer s.streamsMut.RUnlock()
 
@@ -94,7 +198,11 @@ func (s *StreamsStore) GetStream(key string) ([]StreamEntry, bool) {
 	return values, true
 }
 
-func (s *StreamsStore) Range(key string, start string, end string) ([]StreamEntry, error) {
+func (s *StreamsStore) Range(
+	key string,
+	start string,
+	end string,
+) (Stream, error) {
 	s.streamsMut.RLock()
 	defer s.streamsMut.RUnlock()
 
@@ -122,10 +230,7 @@ func (s *StreamsStore) Range(key string, start string, end string) ([]StreamEntr
 
 	var endID *entry_id.EntryID = nil
 	if end == "+" {
-		endID = &entry_id.EntryID{
-			MsTime: math.MaxInt,
-			SeqNum: math.MaxInt,
-		}
+		endID = entry_id.MaxID()
 	} else {
 		var err error = nil
 		endID, err = entry_id.ParseID(end)
@@ -140,19 +245,24 @@ func (s *StreamsStore) Range(key string, start string, end string) ([]StreamEntr
 	entries := make([]StreamEntry, 0, len(stream))
 
 	for _, entry := range stream {
-		if entry.ID.Less(startID) {
+		if entry.ID.Between(startID, endID) {
+			entries = append(entries, entry)
 			continue
 		}
+
 		if entry.ID.Greater(endID) {
 			break
 		}
-		entries = append(entries, entry)
 	}
 
 	return entries, nil
 }
 
-func (s *StreamsStore) RangeExclusive(key string, start string, end string) ([]StreamEntry, error) {
+func (s *StreamsStore) RangeExclusive(
+	key string,
+	start string,
+	end string,
+) (Stream, error) {
 	s.streamsMut.RLock()
 	defer s.streamsMut.RUnlock()
 
@@ -185,10 +295,7 @@ func (s *StreamsStore) RangeExclusive(key string, start string, end string) ([]S
 
 	var endID *entry_id.EntryID = nil
 	if end == "+" {
-		endID = &entry_id.EntryID{
-			MsTime: math.MaxInt,
-			SeqNum: math.MaxInt,
-		}
+		endID = entry_id.MaxID()
 	} else {
 		var err error = nil
 		endID, err = entry_id.ParseID(end)
@@ -203,13 +310,14 @@ func (s *StreamsStore) RangeExclusive(key string, start string, end string) ([]S
 	entries := make([]StreamEntry, 0, len(stream))
 
 	for _, entry := range stream {
-		if entry.ID.LessOrEqual(startID) {
+		if entry.ID.BetweenExclusive(startID, endID) {
+			entries = append(entries, entry)
 			continue
 		}
-		if entry.ID.GreaterOrEqual(endID) {
+
+		if entry.ID.Greater(endID) {
 			break
 		}
-		entries = append(entries, entry)
 	}
 
 	return entries, nil

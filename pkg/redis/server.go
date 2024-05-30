@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,18 +14,10 @@ import (
 	kv_store "github.com/codecrafters-io/redis-starter-go/pkg/redis/kv-store"
 	protocol "github.com/codecrafters-io/redis-starter-go/pkg/redis/protocol"
 	streams_store "github.com/codecrafters-io/redis-starter-go/pkg/redis/streams-store"
-	"github.com/codecrafters-io/redis-starter-go/pkg/utils"
 
 	master "github.com/codecrafters-io/redis-starter-go/pkg/redis/master"
 	slave "github.com/codecrafters-io/redis-starter-go/pkg/redis/slave"
 )
-
-type StreamListener struct {
-	key     string
-	startID string
-	endID   string
-	added   chan struct{}
-}
 
 type redisServer struct {
 	host string
@@ -44,13 +35,12 @@ type redisServer struct {
 
 	kvStore      *kv_store.KVStore
 	streamsStore *streams_store.StreamsStore
-
-	mut             *sync.RWMutex
-	streamListeners []*StreamListener
 }
 
 func NewRedisServer(config *RedisConfig) *redisServer {
-	store := kv_store.NewKVStore(config.Dir, config.DBFilename)
+	wg := &sync.WaitGroup{}
+	kvStore := kv_store.NewKVStore(config.Dir, config.DBFilename)
+	streamsStore := streams_store.NewStreamsStore(wg)
 
 	role := "slave"
 	var m *master.Master = nil
@@ -59,7 +49,7 @@ func NewRedisServer(config *RedisConfig) *redisServer {
 		role = "master"
 		m = master.NewMaster()
 	} else {
-		s = slave.NewSlave(store, config.Port, config.ReplicaOf)
+		s = slave.NewSlave(kvStore, config.Port, config.ReplicaOf)
 	}
 
 	return &redisServer{
@@ -70,16 +60,14 @@ func NewRedisServer(config *RedisConfig) *redisServer {
 		dbfilename: config.DBFilename,
 
 		isRunning: false,
-		wg:        &sync.WaitGroup{},
+		wg:        wg,
 		role:      role,
 
 		master: m,
 		slave:  s,
 
-		kvStore: store,
-
-		mut:             &sync.RWMutex{},
-		streamListeners: make([]*StreamListener, 0),
+		kvStore:      kvStore,
+		streamsStore: streamsStore,
 	}
 }
 
@@ -316,19 +304,13 @@ func (r *redisServer) handleXADD(writer *bufio.Writer, command *protocol.RedisCo
 	key := command.Parameters[0]
 	id := command.Parameters[1]
 	values := command.Parameters[2:]
-	id, err := r.streamsStore.AppendToStream(key, id, values)
+	id, err := r.streamsStore.Append(key, id, values)
 	if err != nil {
 		protocol.WriteError(writer, err.Error())
 		return
 	}
 
 	protocol.WriteBulkString(writer, id)
-
-	r.wg.Add(1)
-	go func() {
-		defer r.wg.Done()
-		r.notifyStreamListeners(command)
-	}()
 }
 
 func (r *redisServer) handleXRANGE(writer *bufio.Writer, command *protocol.RedisCommand) {
@@ -358,77 +340,6 @@ func (r *redisServer) handleXRANGE(writer *bufio.Writer, command *protocol.Redis
 	}
 }
 
-func (r *redisServer) notifyStreamListeners(command *protocol.RedisCommand) {
-	r.mut.RLock()
-	defer r.mut.RUnlock()
-
-	for _, listener := range r.streamListeners {
-		key := command.Parameters[0]
-		if listener.key != key {
-			continue
-		}
-
-		entries, err := r.streamsStore.RangeExclusive(
-			key,
-			listener.startID,
-			listener.endID,
-		)
-		if err != nil {
-			fmt.Printf("ERROR: %s\n", err.Error())
-			continue
-		}
-		if len(entries) == 0 {
-			continue
-		}
-		listener.added <- struct{}{}
-	}
-}
-
-func (r *redisServer) parseStartID(key string, id string) string {
-	if id != "$" {
-		return id
-	}
-
-	startID := "0-1"
-
-	entries, ok := r.streamsStore.GetStream(key)
-	if ok && len(entries) > 0 {
-		lastEntry := entries[len(entries)-1]
-		fmt.Printf("StartID: %s\n", lastEntry.ID.String())
-		return lastEntry.ID.String()
-	}
-
-	return startID
-}
-
-func (r *redisServer) waitForXADD(command *protocol.RedisCommand) {
-	key := command.Parameters[0]
-	command.Parameters[1] = r.parseStartID(
-		key,
-		command.Parameters[1],
-	)
-	start := command.Parameters[1]
-
-	listener := &StreamListener{
-		key:     key,
-		startID: start,
-		endID:   "+",
-		added:   make(chan struct{}),
-	}
-	r.mut.Lock()
-	r.streamListeners = append(r.streamListeners, listener)
-	r.mut.Unlock()
-
-	<-listener.added
-	close(listener.added)
-
-	r.mut.Lock()
-	defer r.mut.Unlock()
-
-	idx := slices.Index(r.streamListeners, listener)
-	utils.RemoveIndex(r.streamListeners, idx)
-}
-
 func (r *redisServer) handleXREAD(writer *bufio.Writer, command *protocol.RedisCommand) {
 	if (len(command.Parameters)-1)%2 != 0 {
 		protocol.WriteError(writer, "ERROR: Wrong number of arguments")
@@ -449,19 +360,32 @@ func (r *redisServer) handleXREAD(writer *bufio.Writer, command *protocol.RedisC
 		command.Parameters = command.Parameters[1:]
 	}
 
+	streamsCount := len(command.Parameters) / 2
+	// Preprocess start IDs
+	for i := 0; i < streamsCount; i++ {
+		key := command.Parameters[i]
+		command.Parameters[streamsCount+i] = r.streamsStore.ParseStartID(
+			key,
+			command.Parameters[streamsCount+i],
+		)
+	}
+
 	time.Sleep(time.Duration(timeoutMs) * time.Millisecond)
 
 	if timeoutMs == 0 {
-		r.waitForXADD(command)
+		r.streamsStore.WaitForADD(
+			command.Parameters[0],
+			command.Parameters[1],
+			"+",
+		)
 	}
 
-	streamsCount := len(command.Parameters) / 2
 	streams := make([]protocol.Stream, 0)
 
 	realStreamsCount := 0
 	for i := 0; i < streamsCount; i++ {
 		key := command.Parameters[i]
-		start := r.parseStartID(key, command.Parameters[streamsCount+i])
+		start := command.Parameters[streamsCount+i]
 
 		entries, err := r.streamsStore.RangeExclusive(key, start, "+")
 		if err != nil || len(entries) == 0 {
@@ -566,7 +490,7 @@ func (r *redisServer) handleTYPE(writer *bufio.Writer, command *protocol.RedisCo
 		return
 	}
 
-	_, ok = r.streamsStore.GetStream(key)
+	_, ok = r.streamsStore.Get(key)
 	if ok {
 		protocol.WriteSimpleString(writer, "stream")
 		return

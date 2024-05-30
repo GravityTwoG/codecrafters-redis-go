@@ -3,6 +3,7 @@ package entry_id
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +55,21 @@ func (e *EntryID) GreaterOrEqual(other *EntryID) bool {
 		return true
 	}
 	return e.Greater(other)
+}
+
+func (e *EntryID) Between(low *EntryID, high *EntryID) bool {
+	return e.GreaterOrEqual(low) && e.LessOrEqual(high)
+}
+
+func (e *EntryID) BetweenExclusive(low *EntryID, high *EntryID) bool {
+	return e.Greater(low) && e.Less(high)
+}
+
+func MaxID() *EntryID {
+	return &EntryID{
+		MsTime: math.MaxInt,
+		SeqNum: math.MaxInt,
+	}
 }
 
 func ParseID(id string) (*EntryID, error) {
