@@ -101,7 +101,9 @@ func (r *redisServer) Start() {
 
 func (r *redisServer) Stop() {
 	r.isRunning = false
-	r.slave.Stop()
+	if r.slave != nil {
+		r.slave.Stop()
+	}
 	r.wg.Wait()
 }
 
