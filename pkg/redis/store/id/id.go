@@ -15,105 +15,135 @@ var ErrIDsNotIncreasing = errors.New("ERR The ID specified in XADD is equal or s
 var ErrGenerateSeqNum = errors.New("generate-seq-num")
 var ErrGenerateID = errors.New("generate-id")
 
-func ParseID(id string) (int, int, error) {
+type EntryID struct {
+	MsTime int
+	SeqNum int
+}
+
+func (e *EntryID) String() string {
+	return fmt.Sprintf("%d-%d", e.MsTime, e.SeqNum)
+}
+
+func (e *EntryID) Equal(other *EntryID) bool {
+	return e.MsTime == other.MsTime && e.SeqNum == other.SeqNum
+}
+
+func (e *EntryID) Less(other *EntryID) bool {
+	if e.MsTime < other.MsTime {
+		return true
+	}
+	if e.MsTime > other.MsTime {
+		return false
+	}
+	return e.SeqNum < other.SeqNum
+}
+
+func (e *EntryID) LessOrEqual(other *EntryID) bool {
+	if e.Equal(other) {
+		return true
+	}
+	return e.Less(other)
+}
+
+func (e *EntryID) Greater(other *EntryID) bool {
+	return other.Less(e)
+}
+
+func (e *EntryID) GreaterOrEqual(other *EntryID) bool {
+	if e.Equal(other) {
+		return true
+	}
+	return e.Greater(other)
+}
+
+func ParseID(id string) (*EntryID, error) {
 	if id == "*" {
-		return -1, -1, ErrGenerateID
+		return nil, ErrGenerateID
 	}
 
 	delimeterIdx := strings.Index(id, "-")
 	if delimeterIdx == -1 {
-		return -1, -1, ErrInvalidID
+		return nil, ErrInvalidID
 	}
 
 	msTimeStr := id[:delimeterIdx]
 	if msTimeStr == "" {
-		return -1, -1, ErrInvalidID
+		return nil, ErrInvalidID
 	}
 	msTime, err := strconv.Atoi(msTimeStr)
 	if err != nil {
-		return -1, -1, err
+		return nil, err
 	}
 
 	seqNumStr := id[delimeterIdx+1:]
 	if seqNumStr == "*" {
-		return msTime, -1, ErrGenerateSeqNum
+		return &EntryID{MsTime: msTime, SeqNum: -1}, ErrGenerateSeqNum
 	}
 	if seqNumStr == "" {
-		return -1, -1, ErrInvalidID
+		return nil, ErrInvalidID
 	}
 	seqNum, err := strconv.Atoi(seqNumStr)
 	if err != nil {
-		return -1, -1, err
+		return nil, err
 	}
 
 	if msTime < 0 || seqNum < 0 {
-		return -1, -1, ErrIDLessThanMinimum
+		return nil, ErrIDLessThanMinimum
 	}
 	if msTime == 0 && seqNum == 0 {
-		return -1, -1, ErrIDLessThanMinimum
+		return nil, ErrIDLessThanMinimum
 	}
 
-	return msTime, seqNum, nil
+	return &EntryID{
+		MsTime: msTime,
+		SeqNum: seqNum,
+	}, nil
 }
 
-func AreIDsIncreasing(id1 string, id2 string) bool {
-	msTime1, seqNum1, err := ParseID(id1)
-	if err != nil {
-		return false
-	}
-	msTime2, seqNum2, err := ParseID(id2)
-	if err != nil {
-		return false
-	}
+func GenerateID(currentId string, prevID *EntryID) *EntryID {
+	id, err := ParseID(currentId)
 
-	if msTime2 > msTime1 {
-		return true
-	}
-	if msTime2 == msTime1 {
-		return seqNum2 > seqNum1
-	}
-
-	return false
-}
-
-func GenerateID(currentId string, prevId string) string {
-	msTime, _, err := ParseID(currentId)
-
-	if prevId == "" {
+	if prevID == nil {
 		if err == ErrGenerateSeqNum {
-			seqNum := 0
-			if msTime == 0 {
-				seqNum = 1
+			newID := &EntryID{
+				MsTime: id.MsTime,
+				SeqNum: 0,
 			}
-			return fmt.Sprintf("%d-%d", msTime, seqNum)
+			if id.MsTime == 0 {
+				newID.SeqNum = 1
+			}
+			return newID
 		} else if err == ErrGenerateID {
-			msTime = int(time.Now().UnixMilli())
-			return fmt.Sprintf("%d-%d", msTime, 0)
+			return &EntryID{
+				MsTime: int(time.Now().UnixMilli()),
+				SeqNum: 0,
+			}
 		}
 
-		return ""
+		return nil
 	}
 
 	if err == ErrGenerateSeqNum {
-
-		prevMsTime, prevSeqNum, _ := ParseID(prevId)
-		seqNum := prevSeqNum + 1
-		if msTime > prevMsTime {
-			seqNum = 0
+		newID := &EntryID{
+			MsTime: id.MsTime,
+			SeqNum: prevID.SeqNum + 1,
 		}
-		return fmt.Sprintf("%d-%d", msTime, seqNum)
+		if id.MsTime > prevID.MsTime {
+			newID.SeqNum = 0
+		}
+		return newID
 
 	} else if err == ErrGenerateID {
-
-		prevMsTime, prevSeqNum, _ := ParseID(prevId)
-		msTime = int(time.Now().UnixMilli())
-		seqNum := prevSeqNum
-		if msTime == prevMsTime {
-			seqNum += 1
+		newID := &EntryID{
+			MsTime: int(time.Now().UnixMilli()),
+			SeqNum: prevID.SeqNum,
 		}
-		return fmt.Sprintf("%d-%d", msTime, seqNum)
+		if newID.MsTime == prevID.MsTime {
+			newID.SeqNum += 1
+		}
+		return newID
 
 	}
 
-	return ""
+	return nil
 }

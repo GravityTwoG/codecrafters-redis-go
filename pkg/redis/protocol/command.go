@@ -9,7 +9,8 @@ const (
 	DEL  = "DEL"
 	KEYS = "KEYS"
 
-	XADD = "XADD"
+	XADD   = "XADD"
+	XRANGE = "XRANGE"
 
 	PSYNC = "PSYNC"
 

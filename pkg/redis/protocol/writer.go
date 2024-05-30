@@ -26,14 +26,14 @@ func WriteNullBulkString(writer *bufio.Writer) {
 	writer.Write([]byte(fmt.Sprintf("%c-1\r\n", BULK_STRING_SPECIFIER)))
 }
 
-func writeArrayLength(writer *bufio.Writer, length int) {
+func WriteArrayLength(writer *bufio.Writer, length int) {
 	writer.Write([]byte(
 		fmt.Sprintf("%c%d\r\n", ARRAY_SPECIFIER, length),
 	))
 }
 
 func WriteBulkStringArray(writer *bufio.Writer, strs []string) {
-	writeArrayLength(writer, len(strs))
+	WriteArrayLength(writer, len(strs))
 	for _, str := range strs {
 		WriteBulkString(writer, str)
 	}

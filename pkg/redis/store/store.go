@@ -3,6 +3,7 @@ package redisstore
 import (
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -16,7 +17,7 @@ var ErrNotFound = errors.New("not-found")
 var ErrExpired = errors.New("expired")
 
 type StreamEntry struct {
-	ID     string
+	ID     entry_id.EntryID
 	Values []string
 }
 
@@ -129,6 +130,11 @@ func (s *RedisStore) Keys() []string {
 }
 
 func (s *RedisStore) AppendToStream(key string, id string, values []string) (string, error) {
+
+	if len(values)%2 != 0 {
+		return "", fmt.Errorf("invalid number of values")
+	}
+
 	s.streamsMut.Lock()
 	defer s.streamsMut.Unlock()
 
@@ -136,9 +142,9 @@ func (s *RedisStore) AppendToStream(key string, id string, values []string) (str
 	if ok && len(stream) > 0 {
 		prevEntry := stream[len(stream)-1]
 
-		_, _, err := entry_id.ParseID(id)
+		parsedID, err := entry_id.ParseID(id)
 		if err == entry_id.ErrGenerateID || err == entry_id.ErrGenerateSeqNum {
-			id = entry_id.GenerateID(id, prevEntry.ID)
+			parsedID = entry_id.GenerateID(id, &prevEntry.ID)
 			if id == "" {
 				return "", entry_id.ErrIDLessThanMinimum
 			}
@@ -146,21 +152,21 @@ func (s *RedisStore) AppendToStream(key string, id string, values []string) (str
 			return "", err
 		}
 
-		if !entry_id.AreIDsIncreasing(prevEntry.ID, id) {
+		if !parsedID.Greater(&prevEntry.ID) {
 			return "", entry_id.ErrIDsNotIncreasing
 		}
 
 		s.streams[key] = append(stream, StreamEntry{
-			ID:     id,
+			ID:     *parsedID,
 			Values: values,
 		})
 		return id, nil
 	}
 
-	_, _, err := entry_id.ParseID(id)
+	parsedID, err := entry_id.ParseID(id)
 	if err == entry_id.ErrGenerateID || err == entry_id.ErrGenerateSeqNum {
-		id = entry_id.GenerateID(id, "")
-		if id == "" {
+		parsedID = entry_id.GenerateID(id, nil)
+		if parsedID == nil {
 			return "", entry_id.ErrIDLessThanMinimum
 		}
 	} else if err != nil {
@@ -168,7 +174,7 @@ func (s *RedisStore) AppendToStream(key string, id string, values []string) (str
 	}
 
 	entry := StreamEntry{
-		ID:     id,
+		ID:     *parsedID,
 		Values: values,
 	}
 	s.streams[key] = []StreamEntry{entry}
@@ -186,4 +192,43 @@ func (s *RedisStore) GetStream(key string) ([]StreamEntry, bool) {
 	}
 
 	return values, true
+}
+
+func (s *RedisStore) Range(key string, start string, end string) ([]StreamEntry, error) {
+	s.streamsMut.RLock()
+	defer s.streamsMut.RUnlock()
+
+	stream, ok := s.streams[key]
+	if !ok {
+		return nil, ErrNotFound
+	}
+
+	startID, err := entry_id.ParseID(start)
+	if err == entry_id.ErrGenerateSeqNum {
+		startID.SeqNum = 0
+	}
+	if err != nil {
+		return nil, err
+	}
+	endID, err := entry_id.ParseID(end)
+	if err == entry_id.ErrGenerateSeqNum {
+		endID.SeqNum = math.MaxInt
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]StreamEntry, 0, len(stream))
+
+	for _, entry := range stream {
+		if entry.ID.Less(startID) {
+			continue
+		}
+		if entry.ID.Greater(endID) {
+			break
+		}
+		entries = append(entries, entry)
+	}
+
+	return entries, nil
 }

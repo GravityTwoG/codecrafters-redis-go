@@ -161,6 +161,9 @@ func (r *redisServer) handleCommand(writer *bufio.Writer, command *protocol.Redi
 	case protocol.XADD:
 		r.handleXADD(writer, command)
 
+	case protocol.XRANGE:
+		r.handleXRANGE(writer, command)
+
 	case protocol.INFO:
 		r.handleINFO(writer, command)
 
@@ -296,6 +299,33 @@ func (r *redisServer) handleXADD(writer *bufio.Writer, command *protocol.RedisCo
 	}
 
 	protocol.WriteBulkString(writer, id)
+}
+
+func (r *redisServer) handleXRANGE(writer *bufio.Writer, command *protocol.RedisCommand) {
+	if len(command.Parameters) < 3 {
+		protocol.WriteError(writer, "ERROR: Wrong number of arguments")
+		return
+	}
+
+	key := command.Parameters[0]
+	start := command.Parameters[1]
+	end := command.Parameters[2]
+
+	entries, err := r.store.Range(key, start, end)
+	if err != nil {
+		protocol.WriteError(writer, err.Error())
+		return
+	}
+
+	protocol.WriteArrayLength(writer, len(entries))
+	for _, entry := range entries {
+		protocol.WriteArrayLength(writer, 2)
+		protocol.WriteBulkString(writer, entry.ID.String())
+		protocol.WriteArrayLength(writer, len(entry.Values))
+		for _, value := range entry.Values {
+			protocol.WriteBulkString(writer, value)
+		}
+	}
 }
 
 func (r *redisServer) handleINFO(writer *bufio.Writer, command *protocol.RedisCommand) {
