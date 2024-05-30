@@ -334,30 +334,34 @@ func (r *redisServer) handleXRANGE(writer *bufio.Writer, command *protocol.Redis
 }
 
 func (r *redisServer) handleXREAD(writer *bufio.Writer, command *protocol.RedisCommand) {
-	if len(command.Parameters) < 3 {
+	if (len(command.Parameters)-1)%2 != 0 {
 		protocol.WriteError(writer, "ERROR: Wrong number of arguments")
 		return
 	}
 
-	key := command.Parameters[1]
-	start := command.Parameters[2]
+	streamsCount := (len(command.Parameters) - 1) / 2
 
-	entries, err := r.store.RangeExclusive(key, start, "+")
-	if err != nil {
-		protocol.WriteError(writer, err.Error())
-		return
-	}
+	protocol.WriteArrayLength(writer, streamsCount)
+	for i := 0; i < streamsCount; i++ {
+		key := command.Parameters[i+1]
+		start := command.Parameters[streamsCount+i+1]
 
-	protocol.WriteArrayLength(writer, 1)
-	protocol.WriteArrayLength(writer, 2)
-	protocol.WriteBulkString(writer, key)
-	protocol.WriteArrayLength(writer, len(entries))
-	for _, entry := range entries {
+		entries, err := r.store.RangeExclusive(key, start, "+")
+		if err != nil {
+			protocol.WriteError(writer, err.Error())
+			return
+		}
+
 		protocol.WriteArrayLength(writer, 2)
-		protocol.WriteBulkString(writer, entry.ID.String())
-		protocol.WriteArrayLength(writer, len(entry.Values))
-		for _, value := range entry.Values {
-			protocol.WriteBulkString(writer, value)
+		protocol.WriteBulkString(writer, key)
+		protocol.WriteArrayLength(writer, len(entries))
+		for _, entry := range entries {
+			protocol.WriteArrayLength(writer, 2)
+			protocol.WriteBulkString(writer, entry.ID.String())
+			protocol.WriteArrayLength(writer, len(entry.Values))
+			for _, value := range entry.Values {
+				protocol.WriteBulkString(writer, value)
+			}
 		}
 	}
 }
