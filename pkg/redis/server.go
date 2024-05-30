@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +18,13 @@ import (
 	master "github.com/codecrafters-io/redis-starter-go/pkg/redis/master"
 	slave "github.com/codecrafters-io/redis-starter-go/pkg/redis/slave"
 )
+
+type StreamListener struct {
+	key     string
+	startID string
+	endID   string
+	added   chan struct{}
+}
 
 type redisServer struct {
 	host string
@@ -33,6 +41,9 @@ type redisServer struct {
 	slave  *slave.Slave
 
 	store *redisstore.RedisStore
+
+	mut             *sync.RWMutex
+	streamListeners []*StreamListener
 }
 
 func NewRedisServer(config *RedisConfig) *redisServer {
@@ -63,6 +74,9 @@ func NewRedisServer(config *RedisConfig) *redisServer {
 		slave:  s,
 
 		store: store,
+
+		mut:             &sync.RWMutex{},
+		streamListeners: make([]*StreamListener, 0),
 	}
 }
 
@@ -304,6 +318,12 @@ func (r *redisServer) handleXADD(writer *bufio.Writer, command *protocol.RedisCo
 	}
 
 	protocol.WriteBulkString(writer, id)
+
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		r.handleStreamListeners(command)
+	}()
 }
 
 func (r *redisServer) handleXRANGE(writer *bufio.Writer, command *protocol.RedisCommand) {
@@ -333,9 +353,74 @@ func (r *redisServer) handleXRANGE(writer *bufio.Writer, command *protocol.Redis
 	}
 }
 
+func (r *redisServer) handleStreamListeners(command *protocol.RedisCommand) {
+	r.mut.RLock()
+	defer r.mut.RUnlock()
+
+	for _, listener := range r.streamListeners {
+		key := command.Parameters[0]
+		if listener.key != key {
+			continue
+		}
+
+		entries, err := r.store.RangeExclusive(
+			key,
+			listener.startID,
+			listener.endID,
+		)
+		if err != nil {
+			fmt.Printf("ERROR: %s\n", err.Error())
+			continue
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		listener.added <- struct{}{}
+	}
+}
+
 type Stream struct {
 	Key     string
 	Entries []redisstore.StreamEntry
+}
+
+func (r *redisServer) writeStream(writer *bufio.Writer, stream *Stream) {
+	protocol.WriteArrayLength(writer, 2)
+	protocol.WriteBulkString(writer, stream.Key)
+	protocol.WriteArrayLength(writer, len(stream.Entries))
+	for _, entry := range stream.Entries {
+		protocol.WriteArrayLength(writer, 2)
+		protocol.WriteBulkString(writer, entry.ID.String())
+		protocol.WriteArrayLength(writer, len(entry.Values))
+		for _, value := range entry.Values {
+			protocol.WriteBulkString(writer, value)
+		}
+	}
+}
+
+func RemoveIndex[T any](s []T, index int) []T {
+	return append(s[:index], s[index+1:]...)
+}
+
+func (r *redisServer) waitForXADD(command *protocol.RedisCommand) {
+	listener := &StreamListener{
+		key:     command.Parameters[0],
+		startID: command.Parameters[1],
+		endID:   "+",
+		added:   make(chan struct{}),
+	}
+	r.mut.Lock()
+	r.streamListeners = append(r.streamListeners, listener)
+	r.mut.Unlock()
+
+	<-listener.added
+	close(listener.added)
+
+	r.mut.Lock()
+	defer r.mut.Unlock()
+
+	idx := slices.Index(r.streamListeners, listener)
+	RemoveIndex(r.streamListeners, idx)
 }
 
 func (r *redisServer) handleXREAD(writer *bufio.Writer, command *protocol.RedisCommand) {
@@ -344,7 +429,7 @@ func (r *redisServer) handleXREAD(writer *bufio.Writer, command *protocol.RedisC
 		return
 	}
 
-	timeoutMs := 0
+	timeoutMs := -1
 	if command.Parameters[0] == "block" {
 		var err error
 		timeoutMs, err = strconv.Atoi(command.Parameters[1])
@@ -359,6 +444,10 @@ func (r *redisServer) handleXREAD(writer *bufio.Writer, command *protocol.RedisC
 	}
 
 	time.Sleep(time.Duration(timeoutMs) * time.Millisecond)
+
+	if timeoutMs == 0 {
+		r.waitForXADD(command)
+	}
 
 	streamsCount := len(command.Parameters) / 2
 	streams := make([]Stream, 0)
@@ -389,17 +478,7 @@ func (r *redisServer) handleXREAD(writer *bufio.Writer, command *protocol.RedisC
 
 	protocol.WriteArrayLength(writer, realStreamsCount)
 	for _, stream := range streams {
-		protocol.WriteArrayLength(writer, 2)
-		protocol.WriteBulkString(writer, stream.Key)
-		protocol.WriteArrayLength(writer, len(stream.Entries))
-		for _, entry := range stream.Entries {
-			protocol.WriteArrayLength(writer, 2)
-			protocol.WriteBulkString(writer, entry.ID.String())
-			protocol.WriteArrayLength(writer, len(entry.Values))
-			for _, value := range entry.Values {
-				protocol.WriteBulkString(writer, value)
-			}
-		}
+		r.writeStream(writer, &stream)
 	}
 }
 
