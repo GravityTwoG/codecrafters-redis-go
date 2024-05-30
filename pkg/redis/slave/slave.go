@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
+	kv_store "github.com/codecrafters-io/redis-starter-go/pkg/redis/kv-store"
 	protocol "github.com/codecrafters-io/redis-starter-go/pkg/redis/protocol"
-	redisstore "github.com/codecrafters-io/redis-starter-go/pkg/redis/store"
 	"github.com/codecrafters-io/redis-starter-go/pkg/utils"
 )
 
@@ -19,12 +19,12 @@ type Slave struct {
 	replicaOf         string
 	replicationOffset int
 
-	store *redisstore.RedisStore
+	store *kv_store.KVStore
 
 	isRunning bool
 }
 
-func NewSlave(store *redisstore.RedisStore, port string, replicaOf string) *Slave {
+func NewSlave(store *kv_store.KVStore, port string, replicaOf string) *Slave {
 	return &Slave{
 		port:              port,
 		replicaOf:         replicaOf,

@@ -3,6 +3,8 @@ package redis_protocol
 import (
 	"bufio"
 	"fmt"
+
+	streams_store "github.com/codecrafters-io/redis-starter-go/pkg/redis/streams-store"
 )
 
 func WriteSimpleString(writer *bufio.Writer, str string) {
@@ -45,4 +47,23 @@ func WriteInteger(writer *bufio.Writer, val int) {
 
 func WriteError(writer *bufio.Writer, str string) {
 	writer.Write([]byte(fmt.Sprintf("%c%s\r\n", ERROR_SPECIFIER, str)))
+}
+
+type Stream struct {
+	Key     string
+	Entries []streams_store.StreamEntry
+}
+
+func WriteStream(writer *bufio.Writer, stream *Stream) {
+	WriteArrayLength(writer, 2)
+	WriteBulkString(writer, stream.Key)
+	WriteArrayLength(writer, len(stream.Entries))
+	for _, entry := range stream.Entries {
+		WriteArrayLength(writer, 2)
+		WriteBulkString(writer, entry.ID.String())
+		WriteArrayLength(writer, len(entry.Values))
+		for _, value := range entry.Values {
+			WriteBulkString(writer, value)
+		}
+	}
 }

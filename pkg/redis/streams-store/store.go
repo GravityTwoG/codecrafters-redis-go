@@ -1,16 +1,12 @@
-package redisstore
+package streams_store
 
 import (
 	"errors"
 	"fmt"
 	"math"
 	"sync"
-	"time"
 
-	redisvalue "github.com/codecrafters-io/redis-starter-go/pkg/redis/redis-value"
-	entry_id "github.com/codecrafters-io/redis-starter-go/pkg/redis/store/id"
-
-	persistence "github.com/codecrafters-io/redis-starter-go/pkg/redis/persistence"
+	entry_id "github.com/codecrafters-io/redis-starter-go/pkg/redis/streams-store/id"
 )
 
 var ErrNotFound = errors.New("not-found")
@@ -21,115 +17,19 @@ type StreamEntry struct {
 	Values []string
 }
 
-type RedisStore struct {
-	storeMut *sync.RWMutex
-	store    map[string]redisvalue.RedisValue
-
+type StreamsStore struct {
 	streamsMut *sync.RWMutex
 	streams    map[string][]StreamEntry
 }
 
-func NewRedisStore(dir string, dbfilename string) *RedisStore {
-	store := make(map[string]redisvalue.RedisValue)
-	if dir != "" && dbfilename != "" {
-		st, err := persistence.ParseRDBFile(dir, dbfilename)
-		if err != nil {
-			fmt.Println("Error parsing RDB file: ", err.Error())
-		}
-		if st != nil {
-			store = st
-		}
-	}
-
-	return &RedisStore{
-		storeMut: &sync.RWMutex{},
-		store:    store,
-
+func NewStreamsStore() *StreamsStore {
+	return &StreamsStore{
 		streamsMut: &sync.RWMutex{},
 		streams:    make(map[string][]StreamEntry),
 	}
 }
 
-func (s *RedisStore) Set(key string, value string) {
-	fmt.Printf("SET key: %s, value: %s\n", key, value)
-	s.storeMut.Lock()
-	defer s.storeMut.Unlock()
-
-	s.store[key] = redisvalue.RedisValue{
-		Value:     value,
-		ExpiresAt: nil,
-	}
-}
-
-func (s *RedisStore) SetWithTTL(
-	key string, value string, duration time.Duration,
-) {
-	fmt.Printf(
-		"SET key: %s, value: %s, duration: %s\n",
-		key, value, duration.String(),
-	)
-	s.storeMut.Lock()
-	defer s.storeMut.Unlock()
-
-	expiresAt := time.Now().Add(duration)
-	s.store[key] = redisvalue.RedisValue{
-		Value:     value,
-		ExpiresAt: &expiresAt,
-	}
-}
-
-func (s *RedisStore) Get(key string) (string, bool, error) {
-	fmt.Printf("GET key: %s\n", key)
-	s.storeMut.RLock()
-	defer s.storeMut.RUnlock()
-
-	value, ok := s.store[key]
-
-	if !ok {
-		fmt.Printf("GET key: %s NOT_FOUND\n", key)
-		return "", false, ErrNotFound
-	}
-
-	if value.ExpiresAt != nil && time.Now().After(*value.ExpiresAt) {
-		fmt.Printf("GET key: %s EXPIRED\n", key)
-		return "", false, ErrExpired
-	}
-
-	fmt.Printf("GET key: %s, value: %s\n", key, value.Value)
-	return value.Value, true, nil
-}
-
-func (s *RedisStore) Delete(keys []string) int {
-	fmt.Printf("DEL keys: %s\n", keys)
-	s.storeMut.Lock()
-	defer s.storeMut.Unlock()
-
-	deleted := 0
-	for _, key := range keys {
-		_, ok := s.store[key]
-		if ok {
-			deleted++
-		}
-		delete(s.store, key)
-	}
-
-	return deleted
-}
-
-func (s *RedisStore) Keys() []string {
-	s.storeMut.RLock()
-	defer s.storeMut.RUnlock()
-
-	keys := make([]string, 0, len(s.store))
-
-	for key := range s.store {
-		keys = append(keys, key)
-	}
-
-	return keys
-}
-
-func (s *RedisStore) AppendToStream(key string, id string, values []string) (string, error) {
+func (s *StreamsStore) AppendToStream(key string, id string, values []string) (string, error) {
 
 	if len(values)%2 != 0 {
 		return "", fmt.Errorf("invalid number of values")
@@ -182,7 +82,7 @@ func (s *RedisStore) AppendToStream(key string, id string, values []string) (str
 	return parsedID.String(), nil
 }
 
-func (s *RedisStore) GetStream(key string) ([]StreamEntry, bool) {
+func (s *StreamsStore) GetStream(key string) ([]StreamEntry, bool) {
 	s.streamsMut.RLock()
 	defer s.streamsMut.RUnlock()
 
@@ -194,7 +94,7 @@ func (s *RedisStore) GetStream(key string) ([]StreamEntry, bool) {
 	return values, true
 }
 
-func (s *RedisStore) Range(key string, start string, end string) ([]StreamEntry, error) {
+func (s *StreamsStore) Range(key string, start string, end string) ([]StreamEntry, error) {
 	s.streamsMut.RLock()
 	defer s.streamsMut.RUnlock()
 
@@ -252,7 +152,7 @@ func (s *RedisStore) Range(key string, start string, end string) ([]StreamEntry,
 	return entries, nil
 }
 
-func (s *RedisStore) RangeExclusive(key string, start string, end string) ([]StreamEntry, error) {
+func (s *StreamsStore) RangeExclusive(key string, start string, end string) ([]StreamEntry, error) {
 	s.streamsMut.RLock()
 	defer s.streamsMut.RUnlock()
 

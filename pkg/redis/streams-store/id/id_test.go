@@ -3,7 +3,7 @@ package entry_id_test
 import (
 	"testing"
 
-	entry_id "github.com/codecrafters-io/redis-starter-go/pkg/redis/store/id"
+	entry_id "github.com/codecrafters-io/redis-starter-go/pkg/redis/streams-store/id"
 
 	"github.com/stretchr/testify/assert"
 )
