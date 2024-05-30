@@ -333,47 +333,66 @@ func (r *redisServer) handleXRANGE(writer *bufio.Writer, command *protocol.Redis
 	}
 }
 
+type Stream struct {
+	Key     string
+	Entries []redisstore.StreamEntry
+}
+
 func (r *redisServer) handleXREAD(writer *bufio.Writer, command *protocol.RedisCommand) {
 	if (len(command.Parameters)-1)%2 != 0 {
 		protocol.WriteError(writer, "ERROR: Wrong number of arguments")
 		return
 	}
 
-	if command.Parameters[0] == "streams" {
-		command.Parameters = command.Parameters[1:]
-	}
-	timeout := 0
+	timeoutMs := 0
 	if command.Parameters[0] == "block" {
 		var err error
-		timeout, err = strconv.Atoi(command.Parameters[1])
+		timeoutMs, err = strconv.Atoi(command.Parameters[1])
 		if err != nil {
 			protocol.WriteError(writer, "ERROR: Invalid timeout")
 			return
 		}
 		command.Parameters = command.Parameters[2:]
 	}
-
-	if timeout != 0 {
-		time.Sleep(time.Duration(timeout) * time.Millisecond)
+	if command.Parameters[0] == "streams" {
+		command.Parameters = command.Parameters[1:]
 	}
 
-	streamsCount := len(command.Parameters) / 2
+	time.Sleep(time.Duration(timeoutMs) * time.Millisecond)
 
-	protocol.WriteArrayLength(writer, streamsCount)
+	streamsCount := len(command.Parameters) / 2
+	streams := make([]Stream, 0)
+
+	realStreamsCount := 0
 	for i := 0; i < streamsCount; i++ {
 		key := command.Parameters[i]
 		start := command.Parameters[streamsCount+i]
 
 		entries, err := r.store.RangeExclusive(key, start, "+")
 		if err != nil {
-			protocol.WriteError(writer, err.Error())
-			return
+			fmt.Printf("ERROR: %s\n", err.Error())
+			continue
+		}
+		if len(entries) == 0 {
+			continue
 		}
 
+		realStreamsCount++
+		streams = append(streams, Stream{key, entries})
+	}
+
+	if realStreamsCount == 0 {
+		fmt.Printf("No streams\n")
+		protocol.WriteNullBulkString(writer)
+		return
+	}
+
+	protocol.WriteArrayLength(writer, realStreamsCount)
+	for _, stream := range streams {
 		protocol.WriteArrayLength(writer, 2)
-		protocol.WriteBulkString(writer, key)
-		protocol.WriteArrayLength(writer, len(entries))
-		for _, entry := range entries {
+		protocol.WriteBulkString(writer, stream.Key)
+		protocol.WriteArrayLength(writer, len(stream.Entries))
+		for _, entry := range stream.Entries {
 			protocol.WriteArrayLength(writer, 2)
 			protocol.WriteBulkString(writer, entry.ID.String())
 			protocol.WriteArrayLength(writer, len(entry.Values))
