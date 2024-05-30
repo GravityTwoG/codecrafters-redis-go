@@ -160,7 +160,7 @@ func (s *RedisStore) AppendToStream(key string, id string, values []string) (str
 			ID:     *parsedID,
 			Values: values,
 		})
-		return id, nil
+		return parsedID.String(), nil
 	}
 
 	parsedID, err := entry_id.ParseID(id)
@@ -179,7 +179,7 @@ func (s *RedisStore) AppendToStream(key string, id string, values []string) (str
 	}
 	s.streams[key] = []StreamEntry{entry}
 
-	return id, nil
+	return parsedID.String(), nil
 }
 
 func (s *RedisStore) GetStream(key string) ([]StreamEntry, bool) {
