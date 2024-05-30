@@ -251,3 +251,66 @@ func (s *RedisStore) Range(key string, start string, end string) ([]StreamEntry,
 
 	return entries, nil
 }
+
+func (s *RedisStore) RangeExclusive(key string, start string, end string) ([]StreamEntry, error) {
+	s.streamsMut.RLock()
+	defer s.streamsMut.RUnlock()
+
+	stream, ok := s.streams[key]
+	if !ok {
+		return nil, ErrNotFound
+	}
+
+	var startID *entry_id.EntryID = nil
+	if start == "-" {
+		startID = &entry_id.EntryID{
+			MsTime: 0,
+			SeqNum: 1,
+		}
+	} else if start == "0-0" {
+		startID = &entry_id.EntryID{
+			MsTime: 0,
+			SeqNum: 0,
+		}
+	} else {
+		var err error = nil
+		startID, err = entry_id.ParseID(start)
+		if err == entry_id.ErrGenerateSeqNum {
+			startID.SeqNum = 0
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var endID *entry_id.EntryID = nil
+	if end == "+" {
+		endID = &entry_id.EntryID{
+			MsTime: math.MaxInt,
+			SeqNum: math.MaxInt,
+		}
+	} else {
+		var err error = nil
+		endID, err = entry_id.ParseID(end)
+		if err == entry_id.ErrGenerateSeqNum {
+			endID.SeqNum = math.MaxInt
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	entries := make([]StreamEntry, 0, len(stream))
+
+	for _, entry := range stream {
+		if entry.ID.LessOrEqual(startID) {
+			continue
+		}
+		if entry.ID.GreaterOrEqual(endID) {
+			break
+		}
+		entries = append(entries, entry)
+	}
+
+	return entries, nil
+}

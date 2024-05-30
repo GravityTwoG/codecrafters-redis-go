@@ -11,6 +11,7 @@ const (
 
 	XADD   = "XADD"
 	XRANGE = "XRANGE"
+	XREAD  = "XREAD"
 
 	PSYNC = "PSYNC"
 
