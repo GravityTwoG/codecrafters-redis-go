@@ -402,10 +402,35 @@ func RemoveIndex[T any](s []T, index int) []T {
 	return append(s[:index], s[index+1:]...)
 }
 
+func (r *redisServer) parseStartID(key string, id string) string {
+	startID := id
+	if startID == "$" {
+		startID = "0-1"
+
+		entries, ok := r.store.GetStream(key)
+		if ok && len(entries) > 0 {
+			lastEntry := entries[len(entries)-1]
+			fmt.Printf("StartID: %s\n", lastEntry.ID.String())
+			return lastEntry.ID.String()
+		}
+
+		return startID
+	}
+
+	return startID
+}
+
 func (r *redisServer) waitForXADD(command *protocol.RedisCommand) {
+	key := command.Parameters[0]
+	command.Parameters[1] = r.parseStartID(
+		key,
+		command.Parameters[1],
+	)
+	start := command.Parameters[1]
+
 	listener := &StreamListener{
-		key:     command.Parameters[0],
-		startID: command.Parameters[1],
+		key:     key,
+		startID: start,
 		endID:   "+",
 		added:   make(chan struct{}),
 	}
@@ -455,7 +480,7 @@ func (r *redisServer) handleXREAD(writer *bufio.Writer, command *protocol.RedisC
 	realStreamsCount := 0
 	for i := 0; i < streamsCount; i++ {
 		key := command.Parameters[i]
-		start := command.Parameters[streamsCount+i]
+		start := r.parseStartID(key, command.Parameters[streamsCount+i])
 
 		entries, err := r.store.RangeExclusive(key, start, "+")
 		if err != nil {
