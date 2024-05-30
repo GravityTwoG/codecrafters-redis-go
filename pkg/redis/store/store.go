@@ -203,19 +203,38 @@ func (s *RedisStore) Range(key string, start string, end string) ([]StreamEntry,
 		return nil, ErrNotFound
 	}
 
-	startID, err := entry_id.ParseID(start)
-	if err == entry_id.ErrGenerateSeqNum {
-		startID.SeqNum = 0
+	var startID *entry_id.EntryID = nil
+	if start == "-" {
+		startID = &entry_id.EntryID{
+			MsTime: 0,
+			SeqNum: 1,
+		}
+	} else {
+		var err error = nil
+		startID, err = entry_id.ParseID(start)
+		if err == entry_id.ErrGenerateSeqNum {
+			startID.SeqNum = 0
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
-	if err != nil {
-		return nil, err
-	}
-	endID, err := entry_id.ParseID(end)
-	if err == entry_id.ErrGenerateSeqNum {
-		endID.SeqNum = math.MaxInt
-	}
-	if err != nil {
-		return nil, err
+
+	var endID *entry_id.EntryID = nil
+	if end == "+" {
+		endID = &entry_id.EntryID{
+			MsTime: math.MaxInt,
+			SeqNum: math.MaxInt,
+		}
+	} else {
+		var err error = nil
+		endID, err = entry_id.ParseID(end)
+		if err == entry_id.ErrGenerateSeqNum {
+			endID.SeqNum = math.MaxInt
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	entries := make([]StreamEntry, 0, len(stream))
