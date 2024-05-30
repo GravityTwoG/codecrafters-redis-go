@@ -339,12 +339,30 @@ func (r *redisServer) handleXREAD(writer *bufio.Writer, command *protocol.RedisC
 		return
 	}
 
-	streamsCount := (len(command.Parameters) - 1) / 2
+	if command.Parameters[0] == "streams" {
+		command.Parameters = command.Parameters[1:]
+	}
+	timeout := 0
+	if command.Parameters[0] == "block" {
+		var err error
+		timeout, err = strconv.Atoi(command.Parameters[1])
+		if err != nil {
+			protocol.WriteError(writer, "ERROR: Invalid timeout")
+			return
+		}
+		command.Parameters = command.Parameters[2:]
+	}
+
+	if timeout != 0 {
+		time.Sleep(time.Duration(timeout) * time.Millisecond)
+	}
+
+	streamsCount := len(command.Parameters) / 2
 
 	protocol.WriteArrayLength(writer, streamsCount)
 	for i := 0; i < streamsCount; i++ {
-		key := command.Parameters[i+1]
-		start := command.Parameters[streamsCount+i+1]
+		key := command.Parameters[i]
+		start := command.Parameters[streamsCount+i]
 
 		entries, err := r.store.RangeExclusive(key, start, "+")
 		if err != nil {
