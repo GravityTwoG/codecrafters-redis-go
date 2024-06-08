@@ -20,6 +20,12 @@ import (
 	slave "github.com/codecrafters-io/redis-starter-go/pkg/redis/slave"
 )
 
+type HandlerFunc func(
+	ctx context.Context,
+	writer *bufio.Writer,
+	command *protocol.RedisCommand,
+)
+
 type redisServer struct {
 	host string
 	port string
@@ -37,6 +43,8 @@ type redisServer struct {
 
 	kvStore      *kv_store.KVStore
 	streamsStore *streams_store.StreamsStore
+
+	handlers map[string]HandlerFunc
 }
 
 func NewRedisServer(config *RedisConfig) *redisServer {
@@ -56,7 +64,7 @@ func NewRedisServer(config *RedisConfig) *redisServer {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &redisServer{
+	server := redisServer{
 		host: config.Host,
 		port: config.Port,
 
@@ -73,7 +81,56 @@ func NewRedisServer(config *RedisConfig) *redisServer {
 
 		kvStore:      kvStore,
 		streamsStore: streamsStore,
+
+		handlers: make(map[string]HandlerFunc),
 	}
+
+	server.registerCommands()
+
+	return &server
+}
+
+func (r *redisServer) registerCommands() {
+	r.addHandler(protocol.PING, r.handlePING)
+	r.addHandler(protocol.ECHO, r.handleECHO)
+
+	r.addHandler(protocol.SET, r.handleSET)
+	r.addHandler(protocol.GET, r.handleGET)
+	r.addHandler(protocol.DEL, r.handleDEL)
+	r.addHandler(protocol.KEYS, r.handleKEYS)
+
+	r.addHandler(protocol.XADD, r.handleXADD)
+	r.addHandler(protocol.XRANGE, r.handleXRANGE)
+	r.addHandler(protocol.XREAD, r.handleXREAD)
+
+	r.addHandler(protocol.INFO, r.handleINFO)
+
+	r.addHandler(protocol.REPLCONF, func(
+		ctx context.Context,
+		writer *bufio.Writer,
+		command *protocol.RedisCommand,
+	) {
+		if r.master == nil {
+			protocol.WriteError(writer, "ERROR: REPLCONF is not supported in slave mode")
+			return
+		}
+		r.master.HandleREPLCONF(ctx, writer, command)
+	})
+
+	r.addHandler(protocol.WAIT, func(
+		ctx context.Context,
+		writer *bufio.Writer,
+		command *protocol.RedisCommand,
+	) {
+		if r.master == nil {
+			protocol.WriteError(writer, "ERROR: WAIT is not supported in slave mode")
+			return
+		}
+		r.master.HandleWAIT(ctx, writer, command)
+	})
+
+	r.addHandler(protocol.CONFIG, r.handleCONFIG)
+	r.addHandler(protocol.TYPE, r.handleTYPE)
 }
 
 func (r *redisServer) Start() {
@@ -125,6 +182,10 @@ func (r *redisServer) Stop() {
 	r.wg.Wait()
 }
 
+func (r *redisServer) addHandler(name string, handler HandlerFunc) {
+	r.handlers[name] = handler
+}
+
 func (r *redisServer) handleConnection(ctx context.Context, conn net.Conn) {
 	slaveConnection := false
 	defer func() {
@@ -153,73 +214,41 @@ func (r *redisServer) handleConnection(ctx context.Context, conn net.Conn) {
 			return
 		}
 
-		r.handleCommand(ctx, writer, command)
+		if handler, ok := r.handlers[command.Name]; ok {
+			handler(ctx, writer, command)
+		} else {
+			protocol.WriteError(writer, fmt.Sprintf("ERROR: Unknown command: %s", command.Name))
+		}
+
 		writer.Flush()
 	}
 }
 
-func (r *redisServer) handleCommand(
+func (r *redisServer) handlePING(
 	ctx context.Context,
 	writer *bufio.Writer,
 	command *protocol.RedisCommand,
 ) {
-	switch command.Name {
-	case protocol.PING:
-		protocol.WriteSimpleString(writer, "PONG")
-
-	case protocol.ECHO:
-		protocol.WriteBulkString(writer, command.Parameters[0])
-
-	case protocol.SET:
-		r.handleSET(writer, command)
-
-	case protocol.GET:
-		r.handleGET(writer, command)
-
-	case protocol.DEL:
-		r.handleDEL(writer, command)
-
-	case protocol.KEYS:
-		r.handleKEYS(writer, command)
-
-	case protocol.XADD:
-		r.handleXADD(writer, command)
-
-	case protocol.XRANGE:
-		r.handleXRANGE(writer, command)
-
-	case protocol.XREAD:
-		r.handleXREAD(ctx, writer, command)
-
-	case protocol.INFO:
-		r.handleINFO(writer, command)
-
-	case protocol.REPLCONF:
-		if r.master == nil {
-			protocol.WriteError(writer, "ERROR: REPLCONF is not supported in slave mode")
-			return
-		}
-		r.master.HandleREPLCONF(writer, command)
-
-	case protocol.WAIT:
-		if r.master == nil {
-			protocol.WriteError(writer, "ERROR: WAIT is not supported in slave mode")
-			return
-		}
-		r.master.HandleWAIT(writer, command)
-
-	case protocol.CONFIG:
-		r.handleCONFIG(writer, command)
-
-	case protocol.TYPE:
-		r.handleTYPE(writer, command)
-
-	default:
-		protocol.WriteError(writer, "ERROR: Unknown command")
-	}
+	protocol.WriteSimpleString(writer, "PONG")
 }
 
-func (r *redisServer) handleSET(writer *bufio.Writer, command *protocol.RedisCommand) {
+func (r *redisServer) handleECHO(
+	ctx context.Context, writer *bufio.Writer, command *protocol.RedisCommand) {
+	if len(command.Parameters) == 0 {
+		protocol.WriteError(writer, "ERROR: ECHO requires at least 1 argument")
+		return
+	}
+
+	protocol.WriteBulkString(writer, command.Parameters[0])
+}
+
+// key value
+
+func (r *redisServer) handleSET(
+	ctx context.Context,
+	writer *bufio.Writer,
+	command *protocol.RedisCommand,
+) {
 	if r.master != nil {
 		r.wg.Add(1)
 		go func() {
@@ -260,7 +289,11 @@ func (r *redisServer) handleSET(writer *bufio.Writer, command *protocol.RedisCom
 	protocol.WriteError(writer, "ERROR: SET: Wrong number of arguments")
 }
 
-func (r *redisServer) handleGET(writer *bufio.Writer, command *protocol.RedisCommand) {
+func (r *redisServer) handleGET(
+	ctx context.Context,
+	writer *bufio.Writer,
+	command *protocol.RedisCommand,
+) {
 	if len(command.Parameters) != 1 {
 		protocol.WriteError(writer, "ERROR: Wrong number of arguments")
 		fmt.Println("ERROR: GET: Wrong number of arguments")
@@ -286,7 +319,11 @@ func (r *redisServer) handleGET(writer *bufio.Writer, command *protocol.RedisCom
 	protocol.WriteBulkString(writer, value)
 }
 
-func (r *redisServer) handleDEL(writer *bufio.Writer, command *protocol.RedisCommand) {
+func (r *redisServer) handleDEL(
+	ctx context.Context,
+	writer *bufio.Writer,
+	command *protocol.RedisCommand,
+) {
 	if len(command.Parameters) < 1 {
 		protocol.WriteError(writer, "ERROR: Wrong number of arguments")
 		return
@@ -296,7 +333,11 @@ func (r *redisServer) handleDEL(writer *bufio.Writer, command *protocol.RedisCom
 	protocol.WriteInteger(writer, deleted)
 }
 
-func (r *redisServer) handleKEYS(writer *bufio.Writer, command *protocol.RedisCommand) {
+func (r *redisServer) handleKEYS(
+	ctx context.Context,
+	writer *bufio.Writer,
+	command *protocol.RedisCommand,
+) {
 	if len(command.Parameters) != 1 {
 		protocol.WriteError(writer, "ERROR: KEYS. Invalid number of parameters")
 		return
@@ -312,7 +353,12 @@ func (r *redisServer) handleKEYS(writer *bufio.Writer, command *protocol.RedisCo
 
 // Streams
 
-func (r *redisServer) handleXADD(writer *bufio.Writer, command *protocol.RedisCommand) {
+func (r *redisServer) handleXADD(
+	ctx context.Context,
+	writer *bufio.Writer,
+	command *protocol.RedisCommand,
+
+) {
 	if len(command.Parameters) < 2 {
 		protocol.WriteError(writer, "ERROR: Wrong number of arguments")
 		return
@@ -330,7 +376,12 @@ func (r *redisServer) handleXADD(writer *bufio.Writer, command *protocol.RedisCo
 	protocol.WriteBulkString(writer, id)
 }
 
-func (r *redisServer) handleXRANGE(writer *bufio.Writer, command *protocol.RedisCommand) {
+func (r *redisServer) handleXRANGE(
+	ctx context.Context,
+
+	writer *bufio.Writer,
+	command *protocol.RedisCommand,
+) {
 	if len(command.Parameters) < 3 {
 		protocol.WriteError(writer, "ERROR: Wrong number of arguments")
 		return
@@ -437,7 +488,11 @@ func (r *redisServer) handleXREAD(
 	}
 }
 
-func (r *redisServer) handleINFO(writer *bufio.Writer, command *protocol.RedisCommand) {
+func (r *redisServer) handleINFO(
+	ctx context.Context,
+	writer *bufio.Writer,
+	command *protocol.RedisCommand,
+) {
 	if len(command.Parameters) != 1 {
 		protocol.WriteError(writer, "ERROR: INFO. Invalid number of parameters")
 		return
@@ -473,7 +528,7 @@ func (r *redisServer) handleINFO(writer *bufio.Writer, command *protocol.RedisCo
 }
 
 func (r *redisServer) handleCONFIG(
-	writer *bufio.Writer, command *protocol.RedisCommand,
+	ctx context.Context, writer *bufio.Writer, command *protocol.RedisCommand,
 ) {
 	if len(command.Parameters) != 2 {
 		protocol.WriteError(writer, "ERROR: CONFIG. Invalid number of parameters")
@@ -503,7 +558,11 @@ func (r *redisServer) handleCONFIG(
 	protocol.WriteError(writer, "ERROR: CONFIG. Invalid key")
 }
 
-func (r *redisServer) handleTYPE(writer *bufio.Writer, command *protocol.RedisCommand) {
+func (r *redisServer) handleTYPE(
+	ctx context.Context,
+	writer *bufio.Writer,
+	command *protocol.RedisCommand,
+) {
 	if len(command.Parameters) != 1 {
 		protocol.WriteError(writer, "ERROR: TYPE. Invalid number of parameters")
 		return

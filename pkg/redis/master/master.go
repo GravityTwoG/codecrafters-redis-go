@@ -2,6 +2,7 @@ package redis_master
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -224,7 +225,7 @@ func (m *Master) SendGETACK(
 }
 
 func (m *Master) HandleREPLCONF(
-	writer *bufio.Writer, command *protocol.RedisCommand,
+	ctx context.Context, writer *bufio.Writer, command *protocol.RedisCommand,
 ) {
 	if len(command.Parameters) != 2 {
 		protocol.WriteError(writer, "ERROR: REPLCONF. Invalid number of parameters")
@@ -266,7 +267,7 @@ func (m *Master) HandlePSYNC(
 	return nil
 }
 
-func (m *Master) HandleWAIT(writer *bufio.Writer, command *protocol.RedisCommand) {
+func (m *Master) HandleWAIT(ctx context.Context, writer *bufio.Writer, command *protocol.RedisCommand) {
 	if len(command.Parameters) != 2 {
 		protocol.WriteError(writer, "ERROR: WAIT. Invalid number of parameters")
 		fmt.Printf("Error in command WAIT: invalid len %d\n", len(command.Parameters))
