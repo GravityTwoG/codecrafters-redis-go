@@ -2,6 +2,7 @@ package redis
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -26,9 +27,10 @@ type redisServer struct {
 	dir        string
 	dbfilename string
 
-	isRunning bool
-	wg        *sync.WaitGroup
-	role      string
+	ctx    context.Context
+	cancel func()
+	wg     *sync.WaitGroup
+	role   string
 
 	master *master.Master
 	slave  *slave.Slave
@@ -52,6 +54,8 @@ func NewRedisServer(config *RedisConfig) *redisServer {
 		s = slave.NewSlave(kvStore, config.Port, config.ReplicaOf)
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	return &redisServer{
 		host: config.Host,
 		port: config.Port,
@@ -59,9 +63,10 @@ func NewRedisServer(config *RedisConfig) *redisServer {
 		dir:        config.Dir,
 		dbfilename: config.DBFilename,
 
-		isRunning: false,
-		wg:        wg,
-		role:      role,
+		ctx:    ctx,
+		cancel: cancel,
+		wg:     wg,
+		role:   role,
 
 		master: m,
 		slave:  s,
@@ -87,32 +92,40 @@ func (r *redisServer) Start() {
 	}
 	defer l.Close()
 
-	r.isRunning = true
-	for r.isRunning {
+	isRunning := true
+	for isRunning {
 		conn, err := l.Accept()
 		if err != nil {
 			fmt.Println("Error accepting connection: ", err.Error())
 			continue
 		}
 		r.wg.Add(1)
-		go func() {
+		ctx, cancel := context.WithCancel(r.ctx)
+		go func(ctx context.Context) {
 			defer r.wg.Done()
-			r.handleConnection(conn)
-		}()
+			defer cancel()
+			r.handleConnection(ctx, conn)
+		}(ctx)
+
+		select {
+		case <-r.ctx.Done():
+			isRunning = false
+		default:
+		}
 	}
 
 	r.wg.Wait()
 }
 
 func (r *redisServer) Stop() {
-	r.isRunning = false
+	r.cancel()
 	if r.slave != nil {
 		r.slave.Stop()
 	}
 	r.wg.Wait()
 }
 
-func (r *redisServer) handleConnection(conn net.Conn) {
+func (r *redisServer) handleConnection(ctx context.Context, conn net.Conn) {
 	slaveConnection := false
 	defer func() {
 		if !slaveConnection {
@@ -140,12 +153,16 @@ func (r *redisServer) handleConnection(conn net.Conn) {
 			return
 		}
 
-		r.handleCommand(writer, command)
+		r.handleCommand(ctx, writer, command)
 		writer.Flush()
 	}
 }
 
-func (r *redisServer) handleCommand(writer *bufio.Writer, command *protocol.RedisCommand) {
+func (r *redisServer) handleCommand(
+	ctx context.Context,
+	writer *bufio.Writer,
+	command *protocol.RedisCommand,
+) {
 	switch command.Name {
 	case protocol.PING:
 		protocol.WriteSimpleString(writer, "PONG")
@@ -172,7 +189,7 @@ func (r *redisServer) handleCommand(writer *bufio.Writer, command *protocol.Redi
 		r.handleXRANGE(writer, command)
 
 	case protocol.XREAD:
-		r.handleXREAD(writer, command)
+		r.handleXREAD(ctx, writer, command)
 
 	case protocol.INFO:
 		r.handleINFO(writer, command)
@@ -340,7 +357,11 @@ func (r *redisServer) handleXRANGE(writer *bufio.Writer, command *protocol.Redis
 	}
 }
 
-func (r *redisServer) handleXREAD(writer *bufio.Writer, command *protocol.RedisCommand) {
+func (r *redisServer) handleXREAD(
+	ctx context.Context,
+	writer *bufio.Writer,
+	command *protocol.RedisCommand,
+) {
 	if (len(command.Parameters)-1)%2 != 0 {
 		protocol.WriteError(writer, "ERROR: Wrong number of arguments")
 		return
@@ -373,11 +394,16 @@ func (r *redisServer) handleXREAD(writer *bufio.Writer, command *protocol.RedisC
 	time.Sleep(time.Duration(timeoutMs) * time.Millisecond)
 
 	if timeoutMs == 0 {
-		r.streamsStore.WaitForADD(
+		err := r.streamsStore.WaitForADD(
+			ctx,
 			command.Parameters[0],
 			command.Parameters[1],
 			"+",
 		)
+		if err != nil {
+			protocol.WriteError(writer, err.Error())
+			return
+		}
 	}
 
 	streams := make([]protocol.Stream, 0)

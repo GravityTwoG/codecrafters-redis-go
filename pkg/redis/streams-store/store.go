@@ -1,6 +1,7 @@
 package streams_store
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -144,11 +145,15 @@ func (s *StreamsStore) notifyStreamListeners(key string) {
 		if len(entries) == 0 {
 			continue
 		}
-		listener.added <- struct{}{}
+		// non-blocking write
+		select {
+		case listener.added <- struct{}{}:
+		default:
+		}
 	}
 }
 
-func (s *StreamsStore) WaitForADD(key, start, end string) {
+func (s *StreamsStore) WaitForADD(ctx context.Context, key, start, end string) error {
 	listener := &StreamListener{
 		key:     key,
 		startID: start,
@@ -159,14 +164,19 @@ func (s *StreamsStore) WaitForADD(key, start, end string) {
 	s.streamListeners = append(s.streamListeners, listener)
 	s.mut.Unlock()
 
-	<-listener.added
-	close(listener.added)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
 
-	s.mut.Lock()
-	defer s.mut.Unlock()
+	case <-listener.added:
+		close(listener.added)
+		s.mut.Lock()
+		defer s.mut.Unlock()
 
-	idx := slices.Index(s.streamListeners, listener)
-	utils.RemoveIndex(s.streamListeners, idx)
+		idx := slices.Index(s.streamListeners, listener)
+		utils.RemoveIndex(s.streamListeners, idx)
+		return nil
+	}
 }
 
 func (s *StreamsStore) ParseStartID(key string, id string) string {
