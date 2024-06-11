@@ -85,11 +85,13 @@ func LZFDecompress(data []byte) ([]byte, error) {
 	return output, nil
 }
 
-const HLOG = 16
-const HSIZE = (1 << HLOG)
-const LZF_MAX_OFF = (1 << 13)
-const LZF_MAX_REF = ((1 << 8) + (1 << 3))
-const LZF_MAX_LIT = (1 << 5)
+const (
+	hLog      = 16
+	hSize     = (1 << hLog)
+	lzfMaxOff = (1 << 13)
+	lzfMaxRef = ((1 << 8) + (1 << 3))
+	lzfMaxLit = (1 << 5)
+)
 
 func FRST(data []byte, p int) int {
 	return (int(data[p]) << 8) | int(data[p+1])
@@ -100,14 +102,14 @@ func NEXT(v int, data []byte, p int) int {
 }
 
 func IDX(h int) int {
-	return (((h * 0x1e35a7bd) >> (32 - HLOG - 8)) & (HSIZE - 1))
+	return (((h * 0x1e35a7bd) >> (32 - hLog - 8)) & (hSize - 1))
 }
 
 func LZFCompress(data []byte) ([]byte, error) {
 	length := len(data)
 	input := data
 	output := make([]byte, length*2)
-	htab := make([]int, HSIZE)
+	htab := make([]int, hSize)
 
 	in_end := length
 	ip := 0
@@ -124,7 +126,7 @@ func LZFCompress(data []byte) ([]byte, error) {
 		off := ip - ref - 1
 
 		if ref < ip &&
-			off < LZF_MAX_OFF &&
+			off < lzfMaxOff &&
 			ref > 0 &&
 			input[ref+2] == input[ip+2] &&
 			input[ref+1] == input[ip+1] &&
@@ -132,8 +134,8 @@ func LZFCompress(data []byte) ([]byte, error) {
 			/* match found at *ref++ */
 			len := 2
 			maxlen := in_end - ip - len
-			if maxlen > LZF_MAX_REF {
-				maxlen = LZF_MAX_REF
+			if maxlen > lzfMaxRef {
+				maxlen = lzfMaxRef
 			}
 
 			output[op-int(lit)-1] = (lit - 1) & 255 /* stop run */
@@ -189,7 +191,7 @@ func LZFCompress(data []byte) ([]byte, error) {
 			op++
 			ip++
 
-			if lit == LZF_MAX_LIT {
+			if lit == lzfMaxLit {
 				output[op-int(lit)-1] = (lit - 1) & 255 /* stop run */
 				lit = 0
 				op++ /* start run */
@@ -203,7 +205,7 @@ func LZFCompress(data []byte) ([]byte, error) {
 		op++
 		ip++
 
-		if lit == LZF_MAX_LIT {
+		if lit == lzfMaxLit {
 			output[op-int(lit)-1] = (lit - 1) & 255 /* stop run */
 			lit = 0
 			op++ /* start run */

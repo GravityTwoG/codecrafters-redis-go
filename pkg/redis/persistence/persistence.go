@@ -12,54 +12,54 @@ import (
 	redis_value "github.com/codecrafters-io/redis-starter-go/pkg/redis/redis-value"
 )
 
-const RDB_MAGIC = "REDIS"
-const RDB_OPCODE_AUX = 0xFA
-const RDB_OPCODE_RESIZE_DB = 0xFB
-const RDB_OPCODE_EXPIRE_TIME_MS = 0xFC
-const RDB_OPCODE_EXPIRE_TIME = 0xFD
-const RDB_OPCODE_SELECTDB = 0xFE
-const RDB_OPCODE_EOF = 0xFF
+const rdbMagic = "REDIS"
+const rdbOpcodeAux = 0xFA
+const rdbOpcodeResizeDB = 0xFB
+const rdbOpcodeExpireTimeMs = 0xFC
+const rdbOpcodeExpireTime = 0xFD
+const rdpOpcodeSelectDB = 0xFE
+const rdbOpcodeEOF = 0xFF
 
 // first 2 bits
-const RDB_ENC_6BIT = 0b00
-const RDB_ENC_14BIT = 0b01
-const RDB_ENC_32BIT = 0b10
-const RDB_ENC_SPECIAL = 0b11
+const rdbEnc6Bit = 0b00
+const rdbEnc14Bit = 0b01
+const rdbEnc32Bit = 0b10
+const rdbEncSpecial = 0b11
 
 // last 6 bits
 // Integer as string
-const RDB_SPECIAL_INTS_8BIT = 0b000000
-const RDB_SPECIAL_INTS_16BIT = 0b000001
-const RDB_SPECIAL_INTS_32BIT = 0b000010
-const RDB_SPECIAL_S_COMPRESSED = 0b000011
+const rdbSpecialInts8Bit = 0b000000
+const rdbSpecialInts16Bit = 0b000001
+const rdbSpecialInts32Bit = 0b000010
+const rdbSpecialSCompressed = 0b000011
 
-const RDB_VALUE_TYPE_STRING = 0
-const RDB_VALUE_TYPE_LIST = 1
-const RDB_VALUE_TYPE_SET = 2
+const rdbValueTypeString = 0
+const rdbValueTypeList = 1
+const rdbValueTypeSet = 2
 
 // Sorted set
-const RDB_VALUE_TYPE_SSET = 3
+const rdbValueTypeSSet = 3
 
 // Hash
-const RDB_VALUE_TYPE_HASH = 4
+const rdbValueTypeHash = 4
 
 // Zipmap
-const RDB_VALUE_TYPE_ZMAP = 9
+const rdbValueTypeZMap = 9
 
 // Ziplist
-const RDB_VALUE_TYPE_ZLIST = 10
+const rdbValueTypeZList = 10
 
 // Intset
-const RDB_VALUE_TYPE_ISET = 11
+const rdbValueTypeISet = 11
 
 // Sorted set in ziplist
-const RDB_VALUE_TYPE_SSZLIST = 12
+const rdbValueTypeSSZList = 12
 
 // Hashmap in ziplist
-const RDB_VALUE_TYPE_HMZLIST = 13
+const rdbValueTypeHMZList = 13
 
 // List in quicklist
-const RDB_VALUE_TYPE_LQLIST = 14
+const rdbValueTypeLQList = 14
 
 var ErrUnknownOpcode = errors.New("unknown-opcode")
 var ErrUnsupportedType = errors.New("unsupported-type")
@@ -100,7 +100,7 @@ func ParseRDBFile(dir string, dbfilename string) (map[string]redis_value.RedisVa
 		}
 
 		switch opcode {
-		case RDB_OPCODE_AUX:
+		case rdbOpcodeAux:
 			key, err := parseString(reader)
 			if err != nil {
 				fmt.Println("Error parsing key: ", err.Error())
@@ -113,7 +113,7 @@ func ParseRDBFile(dir string, dbfilename string) (map[string]redis_value.RedisVa
 			}
 			fmt.Printf("%s: %s\n", key, value)
 
-		case RDB_OPCODE_SELECTDB:
+		case rdpOpcodeSelectDB:
 			dbNumber, err = parseLen(reader)
 			if err != nil {
 				fmt.Println("Error parsing dbNumber: ", err.Error())
@@ -121,7 +121,7 @@ func ParseRDBFile(dir string, dbfilename string) (map[string]redis_value.RedisVa
 			}
 			fmt.Println("dbNumber: ", dbNumber)
 
-		case RDB_OPCODE_RESIZE_DB:
+		case rdbOpcodeResizeDB:
 			hashTableSize, err = parseLen(reader)
 			if err != nil {
 				fmt.Println("Error parsing len: ", err.Error())
@@ -143,7 +143,7 @@ func ParseRDBFile(dir string, dbfilename string) (map[string]redis_value.RedisVa
 			}
 			return store, nil
 
-		case RDB_OPCODE_EOF:
+		case rdbOpcodeEOF:
 			fmt.Println("EOF")
 			return nil, io.EOF
 
@@ -163,7 +163,7 @@ func verifyMagic(reader *bufio.Reader) error {
 		fmt.Println("Error reading magic: ", err.Error())
 		return err
 	}
-	if string(magic) != RDB_MAGIC {
+	if string(magic) != rdbMagic {
 		fmt.Println("Magic not REDIS: ", string(magic))
 		return nil
 	}
@@ -193,7 +193,7 @@ func parseDB(reader *bufio.Reader) (map[string]redis_value.RedisValue, error) {
 		if err != nil {
 			return store, err
 		}
-		if b == RDB_OPCODE_EOF {
+		if b == rdbOpcodeEOF {
 			return store, nil
 		}
 		reader.UnreadByte()
@@ -218,9 +218,9 @@ func parseKeyValue(reader *bufio.Reader) (string, *redis_value.RedisValue, error
 	}
 
 	var expiryTime *time.Time = nil
-	if b == RDB_OPCODE_EXPIRE_TIME {
+	if b == rdbOpcodeExpireTime {
 		expiryTime, err = parseExpiryTimeSec(reader)
-	} else if b == RDB_OPCODE_EXPIRE_TIME_MS {
+	} else if b == rdbOpcodeExpireTimeMs {
 		expiryTime, err = parseExpiryTimeMs(reader)
 	} else {
 		// there is no expiry
@@ -241,7 +241,7 @@ func parseKeyValue(reader *bufio.Reader) (string, *redis_value.RedisValue, error
 		return "", nil, err
 	}
 
-	if valueType != RDB_VALUE_TYPE_STRING {
+	if valueType != rdbValueTypeString {
 		fmt.Print("unsupported valueType: ", valueType)
 		return "", nil, ErrUnsupportedType
 	}
@@ -287,7 +287,7 @@ func parseString(reader *bufio.Reader) (string, error) {
 
 	valueType = firstTwoBits(valueType)
 
-	if valueType != RDB_ENC_SPECIAL {
+	if valueType != rdbEncSpecial {
 		len, err := parseLen(reader)
 		if err != nil {
 			return "", err
@@ -312,7 +312,7 @@ func parseSpecialValue(reader *bufio.Reader) (string, error) {
 	}
 	valueType = lastSixBits(valueType)
 
-	if valueType == RDB_SPECIAL_INTS_8BIT {
+	if valueType == rdbSpecialInts8Bit {
 		b, err := reader.ReadByte()
 		if err != nil {
 			return "", err
@@ -320,7 +320,7 @@ func parseSpecialValue(reader *bufio.Reader) (string, error) {
 		return fmt.Sprintf("%d", b), nil
 	}
 
-	if valueType == RDB_SPECIAL_INTS_16BIT {
+	if valueType == rdbSpecialInts16Bit {
 		value, err := readInt16(reader)
 		if err != nil {
 			return "", err
@@ -328,7 +328,7 @@ func parseSpecialValue(reader *bufio.Reader) (string, error) {
 		return fmt.Sprintf("%d", value), nil
 	}
 
-	if valueType == RDB_SPECIAL_INTS_32BIT {
+	if valueType == rdbSpecialInts32Bit {
 		value, err := readInt32(reader)
 		if err != nil {
 			return "", err
@@ -336,7 +336,7 @@ func parseSpecialValue(reader *bufio.Reader) (string, error) {
 		return fmt.Sprintf("%d", value), nil
 	}
 
-	if valueType == RDB_SPECIAL_S_COMPRESSED {
+	if valueType == rdbSpecialSCompressed {
 		compressedLen, err := parseLen(reader)
 		if err != nil {
 			return "", err
@@ -373,12 +373,12 @@ func parseLen(reader *bufio.Reader) (int, error) {
 	}
 
 	first2Bits := firstTwoBits(b)
-	if first2Bits == RDB_ENC_6BIT {
+	if first2Bits == rdbEnc6Bit {
 		// next 6 bits represents length
 		return int(b), nil
 	}
 
-	if first2Bits == RDB_ENC_14BIT {
+	if first2Bits == rdbEnc14Bit {
 		// next 14 bits represents length
 		nextB, err := reader.ReadByte()
 		if err != nil {
@@ -387,7 +387,7 @@ func parseLen(reader *bufio.Reader) (int, error) {
 		return int(b)<<8 | int(nextB), nil
 	}
 
-	if first2Bits == RDB_ENC_32BIT {
+	if first2Bits == rdbEnc32Bit {
 		// Discard the remaining 6 bits. The next 4 bytes from the stream represent the length
 		return readInt32(reader)
 	}

@@ -15,8 +15,8 @@ var ErrNotFound = errors.New("not-found")
 var ErrExpired = errors.New("expired")
 
 type KVStore struct {
-	storeMut *sync.RWMutex
-	store    map[string]redisvalue.RedisValue
+	mu    *sync.RWMutex
+	store map[string]redisvalue.RedisValue
 }
 
 func NewKVStore(dir string, dbfilename string) *KVStore {
@@ -32,15 +32,15 @@ func NewKVStore(dir string, dbfilename string) *KVStore {
 	}
 
 	return &KVStore{
-		storeMut: &sync.RWMutex{},
-		store:    store,
+		mu:    &sync.RWMutex{},
+		store: store,
 	}
 }
 
 func (s *KVStore) Set(key string, value string) {
 	fmt.Printf("SET key: %s, value: %s\n", key, value)
-	s.storeMut.Lock()
-	defer s.storeMut.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	s.store[key] = redisvalue.RedisValue{
 		Value:     value,
@@ -55,8 +55,8 @@ func (s *KVStore) SetWithTTL(
 		"SET key: %s, value: %s, duration: %s\n",
 		key, value, duration.String(),
 	)
-	s.storeMut.Lock()
-	defer s.storeMut.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	expiresAt := time.Now().Add(duration)
 	s.store[key] = redisvalue.RedisValue{
@@ -67,8 +67,8 @@ func (s *KVStore) SetWithTTL(
 
 func (s *KVStore) Get(key string) (string, bool, error) {
 	fmt.Printf("GET key: %s\n", key)
-	s.storeMut.RLock()
-	defer s.storeMut.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	value, ok := s.store[key]
 
@@ -88,8 +88,8 @@ func (s *KVStore) Get(key string) (string, bool, error) {
 
 func (s *KVStore) Delete(keys []string) int {
 	fmt.Printf("DEL keys: %s\n", keys)
-	s.storeMut.Lock()
-	defer s.storeMut.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	deleted := 0
 	for _, key := range keys {
@@ -104,8 +104,8 @@ func (s *KVStore) Delete(keys []string) int {
 }
 
 func (s *KVStore) Keys() []string {
-	s.storeMut.RLock()
-	defer s.storeMut.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	keys := make([]string, 0, len(s.store))
 

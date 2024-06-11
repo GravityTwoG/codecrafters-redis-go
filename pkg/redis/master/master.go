@@ -19,21 +19,22 @@ type _Replica struct {
 	conn    net.Conn
 	pending bool
 	offset  int
-	mutex   *sync.Mutex
+	mu      *sync.Mutex
 }
 
 type Master struct {
-	mutex             *sync.RWMutex
 	replicationId     string
 	replicationOffset int
 
-	slavePorts        []string
+	slavePorts []string
+
+	mu                *sync.RWMutex
 	connectedReplicas []_Replica
 }
 
 func NewMaster() *Master {
 	return &Master{
-		mutex:             &sync.RWMutex{},
+		mu:                &sync.RWMutex{},
 		replicationId:     utils.RandString(40),
 		replicationOffset: 0,
 
@@ -43,32 +44,32 @@ func NewMaster() *Master {
 }
 
 func (m *Master) ReplicationId() string {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.replicationId
 }
 
 func (m *Master) ReplicationOffset() int {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.replicationOffset
 }
 
 func (m *Master) ConnectedReplicasCount() int {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return len(m.connectedReplicas)
 }
 
 func (m *Master) HandleSlave(conn net.Conn, _ *bufio.Reader) {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	m.connectedReplicas = append(m.connectedReplicas, _Replica{
 		conn:    conn,
 		pending: false,
 		offset:  0,
-		mutex:   &sync.Mutex{},
+		mu:      &sync.Mutex{},
 	})
 }
 
@@ -87,15 +88,15 @@ func (m *Master) SendRDBFile(writer *bufio.Writer) {
 func (m *Master) SendSET(command *protocol.RedisCommand) {
 	wg := &sync.WaitGroup{}
 
-	m.mutex.Lock()
+	m.mu.Lock()
 	for i := range m.connectedReplicas {
 		wg.Add(1)
 		go func(currentReplica *_Replica) {
 			defer wg.Done()
 			replicaAddr := currentReplica.conn.RemoteAddr().String()
 			fmt.Printf("Trying to send SET to slave: %s\n", replicaAddr)
-			currentReplica.mutex.Lock()
-			defer currentReplica.mutex.Unlock()
+			currentReplica.mu.Lock()
+			defer currentReplica.mu.Unlock()
 
 			countingWriter := &utils.CountingWriter{
 				Writer: currentReplica.conn,
@@ -110,7 +111,7 @@ func (m *Master) SendSET(command *protocol.RedisCommand) {
 			fmt.Printf("Sent SET to slave: %s\n", replicaAddr)
 		}(&m.connectedReplicas[i])
 	}
-	m.mutex.Unlock()
+	m.mu.Unlock()
 
 	wg.Wait()
 }
@@ -169,13 +170,13 @@ func (m *Master) SendGETACK(
 	acksChan := make(chan bool)
 	wg := &sync.WaitGroup{}
 
-	m.mutex.Lock()
+	m.mu.Lock()
 	for i := range m.connectedReplicas {
 		wg.Add(1)
 		go func(currentReplica *_Replica) {
 			defer wg.Done()
-			currentReplica.mutex.Lock()
-			defer currentReplica.mutex.Unlock()
+			currentReplica.mu.Lock()
+			defer currentReplica.mu.Unlock()
 
 			replicaAddr := currentReplica.conn.RemoteAddr().String()
 			if !currentReplica.pending {
@@ -195,7 +196,7 @@ func (m *Master) SendGETACK(
 			}
 		}(&m.connectedReplicas[i])
 	}
-	m.mutex.Unlock()
+	m.mu.Unlock()
 
 	doneChan := make(chan struct{})
 	go func() {
@@ -233,8 +234,8 @@ func (m *Master) HandleREPLCONF(
 	}
 
 	if strings.ToUpper(command.Parameters[0]) == "LISTENING-PORT" {
-		m.mutex.Lock()
-		defer m.mutex.Unlock()
+		m.mu.Lock()
+		defer m.mu.Unlock()
 
 		slavePort := command.Parameters[1]
 		m.slavePorts = append(m.slavePorts, slavePort)

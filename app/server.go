@@ -27,7 +27,7 @@ func main() {
 
 	config.ReplicaOf = strings.Replace(config.ReplicaOf, " ", ":", -1)
 
-	redisstore := redis.NewRedisServer(&config)
+	redisServer := redis.NewRedisServer(&config)
 
 	// graceful shutdown
 	go func() {
@@ -36,8 +36,8 @@ func main() {
 
 		<-exit
 		fmt.Println("Shutting down...")
-		redisstore.Stop()
+		redisServer.Stop()
 	}()
 
-	redisstore.Start()
+	redisServer.Start()
 }

@@ -9,13 +9,13 @@ import (
 
 func WriteSimpleString(writer *bufio.Writer, str string) {
 	writer.Write([]byte(
-		fmt.Sprintf("%c%s\r\n", SIMPLE_STRING_SPECIFIER, str),
+		fmt.Sprintf("%c%s\r\n", simpleStringSpecifier, str),
 	))
 }
 
 func WriteBulkStringSpecifier(writer *bufio.Writer, length int) {
 	writer.Write([]byte(
-		fmt.Sprintf("%c%d\r\n", BULK_STRING_SPECIFIER, length),
+		fmt.Sprintf("%c%d\r\n", buldStringSpecifier, length),
 	))
 }
 
@@ -25,12 +25,12 @@ func WriteBulkString(writer *bufio.Writer, str string) {
 }
 
 func WriteNullBulkString(writer *bufio.Writer) {
-	writer.Write([]byte(fmt.Sprintf("%c-1\r\n", BULK_STRING_SPECIFIER)))
+	writer.Write([]byte(fmt.Sprintf("%c-1\r\n", buldStringSpecifier)))
 }
 
 func WriteArrayLength(writer *bufio.Writer, length int) {
 	writer.Write([]byte(
-		fmt.Sprintf("%c%d\r\n", ARRAY_SPECIFIER, length),
+		fmt.Sprintf("%c%d\r\n", arraySpecifier, length),
 	))
 }
 
@@ -42,11 +42,11 @@ func WriteBulkStringArray(writer *bufio.Writer, strs []string) {
 }
 
 func WriteInteger(writer *bufio.Writer, val int) {
-	writer.Write([]byte(fmt.Sprintf("%c%d\r\n", INTEGER_SPECIFIER, val)))
+	writer.Write([]byte(fmt.Sprintf("%c%d\r\n", integerSpecifier, val)))
 }
 
 func WriteError(writer *bufio.Writer, str string) {
-	writer.Write([]byte(fmt.Sprintf("%c%s\r\n", ERROR_SPECIFIER, str)))
+	writer.Write([]byte(fmt.Sprintf("%c%s\r\n", errorSpecifier, str)))
 }
 
 type Stream struct {

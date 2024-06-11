@@ -7,15 +7,15 @@ import (
 	"strings"
 )
 
-const SIMPLE_STRING_SPECIFIER = '+'
-const ERROR_SPECIFIER = '-'
-const INTEGER_SPECIFIER = ':'
-const BULK_STRING_SPECIFIER = '$'
-const ARRAY_SPECIFIER = '*'
+const simpleStringSpecifier = '+'
+const errorSpecifier = '-'
+const integerSpecifier = ':'
+const buldStringSpecifier = '$'
+const arraySpecifier = '*'
 
 func parseParametersCount(reader *bufio.Reader) int {
 	firstByte, err := reader.ReadByte()
-	if err != nil || firstByte != ARRAY_SPECIFIER {
+	if err != nil || firstByte != arraySpecifier {
 		fmt.Println("parseParametersCount: Error reading byte: ", err.Error())
 		return -1
 	}
@@ -38,7 +38,7 @@ func parseParametersCount(reader *bufio.Reader) int {
 
 func ParseBulkStringLen(reader *bufio.Reader) int {
 	firstByte, err := reader.ReadByte()
-	if err != nil || firstByte != BULK_STRING_SPECIFIER {
+	if err != nil || firstByte != buldStringSpecifier {
 		fmt.Println("parseBulkStringLen: Error reading byte: ", err.Error())
 		return -1
 	}
@@ -81,7 +81,7 @@ func parseBulkString(reader *bufio.Reader) string {
 
 func ParseSimpleString(reader *bufio.Reader) string {
 	firstByte, err := reader.ReadByte()
-	if err != nil || firstByte != SIMPLE_STRING_SPECIFIER {
+	if err != nil || firstByte != simpleStringSpecifier {
 		fmt.Println("parseSimpleString: Error reading byte: ", err.Error())
 		return ""
 	}

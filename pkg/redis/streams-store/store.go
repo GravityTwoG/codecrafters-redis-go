@@ -30,11 +30,11 @@ type StreamListener struct {
 }
 
 type StreamsStore struct {
-	wg         *sync.WaitGroup
-	streamsMut *sync.RWMutex
-	streams    map[string]Stream
+	wg        *sync.WaitGroup
+	streamsMu *sync.RWMutex
+	streams   map[string]Stream
 
-	mut             *sync.RWMutex
+	listenersMu     *sync.RWMutex
 	streamListeners []*StreamListener
 }
 
@@ -42,10 +42,10 @@ func NewStreamsStore(wg *sync.WaitGroup) *StreamsStore {
 	return &StreamsStore{
 		wg: wg,
 
-		streamsMut: &sync.RWMutex{},
-		streams:    make(map[string]Stream),
+		streamsMu: &sync.RWMutex{},
+		streams:   make(map[string]Stream),
 
-		mut:             &sync.RWMutex{},
+		listenersMu:     &sync.RWMutex{},
 		streamListeners: make([]*StreamListener, 0),
 	}
 }
@@ -60,8 +60,8 @@ func (s *StreamsStore) Append(
 		return "", fmt.Errorf("invalid number of values")
 	}
 
-	s.streamsMut.Lock()
-	defer s.streamsMut.Unlock()
+	s.streamsMu.Lock()
+	defer s.streamsMu.Unlock()
 
 	defer func() {
 		s.wg.Add(1)
@@ -125,8 +125,8 @@ func (s *StreamsStore) createStream(
 }
 
 func (s *StreamsStore) notifyStreamListeners(key string) {
-	s.mut.RLock()
-	defer s.mut.RUnlock()
+	s.listenersMu.RLock()
+	defer s.listenersMu.RUnlock()
 
 	for _, listener := range s.streamListeners {
 		if listener.key != key {
@@ -160,9 +160,9 @@ func (s *StreamsStore) WaitForADD(ctx context.Context, key, start, end string) e
 		endID:   end,
 		added:   make(chan struct{}),
 	}
-	s.mut.Lock()
+	s.listenersMu.Lock()
 	s.streamListeners = append(s.streamListeners, listener)
-	s.mut.Unlock()
+	s.listenersMu.Unlock()
 
 	select {
 	case <-ctx.Done():
@@ -170,8 +170,8 @@ func (s *StreamsStore) WaitForADD(ctx context.Context, key, start, end string) e
 
 	case <-listener.added:
 		close(listener.added)
-		s.mut.Lock()
-		defer s.mut.Unlock()
+		s.listenersMu.Lock()
+		defer s.listenersMu.Unlock()
 
 		idx := slices.Index(s.streamListeners, listener)
 		utils.RemoveIndex(s.streamListeners, idx)
@@ -197,8 +197,8 @@ func (s *StreamsStore) ParseStartID(key string, id string) string {
 }
 
 func (s *StreamsStore) Get(key string) (Stream, bool) {
-	s.streamsMut.RLock()
-	defer s.streamsMut.RUnlock()
+	s.streamsMu.RLock()
+	defer s.streamsMu.RUnlock()
 
 	values, ok := s.streams[key]
 	if !ok {
@@ -213,8 +213,8 @@ func (s *StreamsStore) Range(
 	start string,
 	end string,
 ) (Stream, error) {
-	s.streamsMut.RLock()
-	defer s.streamsMut.RUnlock()
+	s.streamsMu.RLock()
+	defer s.streamsMu.RUnlock()
 
 	stream, ok := s.streams[key]
 	if !ok {
@@ -273,8 +273,8 @@ func (s *StreamsStore) RangeExclusive(
 	start string,
 	end string,
 ) (Stream, error) {
-	s.streamsMut.RLock()
-	defer s.streamsMut.RUnlock()
+	s.streamsMu.RLock()
+	defer s.streamsMu.RUnlock()
 
 	stream, ok := s.streams[key]
 	if !ok {
